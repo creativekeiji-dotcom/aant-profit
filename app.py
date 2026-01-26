@@ -9,39 +9,27 @@ import datetime
 import traceback
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
 
 # ==========================================
 # 1. 설정
 # ==========================================
 st.set_page_config(page_title="AANT 경영 리포트", layout="wide")
 
-# [핵심] 여기에 "십일번가 주식회사"를 명확하게 등록했습니다.
 DEFAULT_FEE_RATES = {
-    # 쿠팡
     "쿠팡": 0.1188, 
     "쿠팡 주식회사": 0.1188, 
     "쿠팡그로스": 0.1188,
-    
-    # 11번가 (숫자, 한글 모두 등록)
     "11번가": 0.143,
     "11번가 주식회사": 0.143,
-    "11번가(주)": 0.143,
-    "십일번가": 0.143,          # 한글 표기 추가
-    "십일번가 주식회사": 0.143, # [이사님 요청] 고정값 추가
-    
-    # 지마켓/옥션
+    "십일번가": 0.143,
+    "십일번가 주식회사": 0.143,
     "지마켓": 0.13, 
     "주식회사 지마켓": 0.13, 
     "옥션": 0.13,
     "주식회사 옥션": 0.13,
-    
-    # 네이버
     "네이버": 0.0563,
     "네이버파이낸셜": 0.0563,
     "스마트스토어": 0.0563,
-    
-    # 기타
     "오늘의집": 0.22,
     "버킷플레이스": 0.22,
     "카카오톡": 0.055,
@@ -50,33 +38,21 @@ DEFAULT_FEE_RATES = {
 }
 
 # ==========================================
-# 2. 수수료 로직 (한글 '십일'까지 잡아냄)
+# 2. 수수료 로직
 # ==========================================
 def get_fee_rate(channel_name, user_fee_dict=None):
-    # 1. 엑셀에 적힌 원본 이름 그대로 가져오기 (공백만 제거)
     raw_name = str(channel_name).strip()
     clean_name = raw_name.replace(" ", "")
     
-    # 2. 사용자 업로드 파일 우선 적용
     if user_fee_dict and raw_name in user_fee_dict:
         return user_fee_dict[raw_name]
     
-    # 3. 기본 족보(DEFAULT_FEE_RATES)에 똑같은 이름이 있는지 확인
-    # "십일번가 주식회사"가 여기에 걸립니다.
-    if raw_name in DEFAULT_FEE_RATES:
-        return DEFAULT_FEE_RATES[raw_name]
-        
-    if clean_name in DEFAULT_FEE_RATES:
-        return DEFAULT_FEE_RATES[clean_name]
+    if raw_name in DEFAULT_FEE_RATES: return DEFAULT_FEE_RATES[raw_name]
+    if clean_name in DEFAULT_FEE_RATES: return DEFAULT_FEE_RATES[clean_name]
 
-    # 4. 그래도 없으면 키워드로 검색 (비상용)
     if "그로스" in clean_name: return 0.1188
     if "쿠팡" in clean_name: return 0.1188
-    
-    # 11번가 집중 단속 (숫자 11, 한글 십일)
-    if "11번" in clean_name: return 0.143
-    if "십일번" in clean_name: return 0.143 # 한글 '십일' 체크
-    
+    if "11번" in clean_name or "십일번" in clean_name: return 0.143
     if "지마켓" in clean_name or "G마켓" in clean_name.upper(): return 0.13
     if "옥션" in clean_name: return 0.13
     if "네이버" in clean_name or "스마트스토어" in clean_name: return 0.0563
@@ -87,7 +63,7 @@ def get_fee_rate(channel_name, user_fee_dict=None):
     return 0.0
 
 # ==========================================
-# 3. PPT 생성 함수
+# 3. PPT 생성 함수 (흰 배경 추가!)
 # ==========================================
 def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df):
     prs = Presentation()
@@ -111,12 +87,19 @@ def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df
     add_line(f"💸 고정비: {int(fixed_cost):,}원", 20)
     add_line(f"🏆 순이익: {int(net):,}원 ({margin:.1f}%)", 28, True)
 
-    # 그래프
+    # 그래프 (여기서 흰 배경 추가!)
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     slide.shapes.title.text = "2. 채널별 성과"
     try:
-        img_pie = fig_pie.to_image(format="png", width=500, height=400, scale=2)
-        img_bar = fig_bar.to_image(format="png", width=500, height=400, scale=2)
+        # [핵심 수정] 하얀 도화지(scale=2)를 깔고 그려라! 
+        # to_image 함수는 기본적으로 투명 배경이라 검게 보일 수 있음.
+        # Plotly 자체 레이아웃에 배경색을 흰색으로 지정
+        fig_pie.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+        fig_bar.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+
+        img_pie = fig_pie.to_image(format="png", width=600, height=450, scale=2)
+        img_bar = fig_bar.to_image(format="png", width=600, height=450, scale=2)
+        
         slide.shapes.add_picture(io.BytesIO(img_pie), Inches(0.5), Inches(2), width=Inches(4.5))
         slide.shapes.add_picture(io.BytesIO(img_bar), Inches(5.2), Inches(2), width=Inches(4.5))
     except:
@@ -193,7 +176,6 @@ def load_data(files, user_fees):
     df['총판매금액'] = df['수량'] * df['판매단가']
     df['총원가금액'] = df['수량'] * df['원가단가']
     
-    # 수수료 적용
     df['수수료율'] = df['채널'].apply(lambda x: get_fee_rate(x, user_fees))
     df['수수료금액'] = df['총판매금액'] * df['수수료율']
     df['매출총이익'] = df['총판매금액'] - df['총원가금액'] - df['수수료금액']
@@ -253,6 +235,9 @@ if up_files:
             ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
             
             fig_pie = px.pie(ch_df, values='총판매금액', names='채널', hole=0.4, title="매출 비중")
+            # [시각적 개선] 파이 차트에 텍스트 색상 및 위치 조정
+            fig_pie.update_traces(textinfo='percent+label', textposition='inside')
+
             fig_bar = make_subplots(specs=[[{"secondary_y": True}]])
             fig_bar.add_trace(go.Bar(x=ch_df['채널'], y=ch_df['매출총이익'], name="이익금"), secondary_y=False)
             fig_bar.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
