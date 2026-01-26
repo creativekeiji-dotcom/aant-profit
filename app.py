@@ -16,25 +16,13 @@ from pptx.util import Inches, Pt
 st.set_page_config(page_title="AANT 경영 리포트", layout="wide")
 
 DEFAULT_FEE_RATES = {
-    "쿠팡": 0.1188, 
-    "쿠팡 주식회사": 0.1188, 
-    "쿠팡그로스": 0.1188,
-    "11번가": 0.143,
-    "11번가 주식회사": 0.143,
-    "십일번가": 0.143,
-    "십일번가 주식회사": 0.143,
-    "지마켓": 0.13, 
-    "주식회사 지마켓": 0.13, 
-    "옥션": 0.13,
-    "주식회사 옥션": 0.13,
-    "네이버": 0.0563,
-    "네이버파이낸셜": 0.0563,
-    "스마트스토어": 0.0563,
-    "오늘의집": 0.22,
-    "버킷플레이스": 0.22,
-    "카카오톡": 0.055,
-    "알리": 0.11,
-    "사업자거래": 0.0
+    "쿠팡": 0.1188, "쿠팡 주식회사": 0.1188, "쿠팡그로스": 0.1188,
+    "11번가": 0.143, "11번가 주식회사": 0.143, "십일번가": 0.143, "십일번가 주식회사": 0.143,
+    "지마켓": 0.13, "주식회사 지마켓": 0.13, 
+    "옥션": 0.13, "주식회사 옥션": 0.13,
+    "네이버": 0.0563, "네이버파이낸셜": 0.0563, "스마트스토어": 0.0563,
+    "오늘의집": 0.22, "버킷플레이스": 0.22,
+    "카카오톡": 0.055, "알리": 0.11, "사업자거래": 0.0
 }
 
 # ==========================================
@@ -44,9 +32,7 @@ def get_fee_rate(channel_name, user_fee_dict=None):
     raw_name = str(channel_name).strip()
     clean_name = raw_name.replace(" ", "")
     
-    if user_fee_dict and raw_name in user_fee_dict:
-        return user_fee_dict[raw_name]
-    
+    if user_fee_dict and raw_name in user_fee_dict: return user_fee_dict[raw_name]
     if raw_name in DEFAULT_FEE_RATES: return DEFAULT_FEE_RATES[raw_name]
     if clean_name in DEFAULT_FEE_RATES: return DEFAULT_FEE_RATES[clean_name]
 
@@ -63,7 +49,7 @@ def get_fee_rate(channel_name, user_fee_dict=None):
     return 0.0
 
 # ==========================================
-# 3. PPT 생성 함수 (흰 배경 추가!)
+# 3. PPT 생성 함수 (강제 화이트 모드 적용!)
 # ==========================================
 def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df):
     prs = Presentation()
@@ -87,16 +73,33 @@ def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df
     add_line(f"💸 고정비: {int(fixed_cost):,}원", 20)
     add_line(f"🏆 순이익: {int(net):,}원 ({margin:.1f}%)", 28, True)
 
-    # 그래프 (여기서 흰 배경 추가!)
+    # 그래프
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     slide.shapes.title.text = "2. 채널별 성과"
     try:
-        # [핵심 수정] 하얀 도화지(scale=2)를 깔고 그려라! 
-        # to_image 함수는 기본적으로 투명 배경이라 검게 보일 수 있음.
-        # Plotly 자체 레이아웃에 배경색을 흰색으로 지정
-        fig_pie.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-        fig_bar.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+        # [핵심 수정] template="plotly_white" -> 이게 핵심입니다.
+        # 강제로 "흰 바탕에 검은 글씨 테마"를 적용합니다.
+        
+        # 1. 파이 차트 디자인 강제 변경
+        fig_pie.update_layout(
+            template="plotly_white", # 화이트 테마 적용
+            paper_bgcolor="white",   # 배경 흰색
+            plot_bgcolor="white",    # 차트 배경 흰색
+            font=dict(color="black") # 글씨 검정색
+        )
 
+        # 2. 바 차트 디자인 강제 변경
+        fig_bar.update_layout(
+            template="plotly_white",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(color="black")
+        )
+        # 바 차트의 X축, Y축 글씨와 선도 검정색으로 강제
+        fig_bar.update_xaxes(showline=True, linewidth=2, linecolor='black', gridcolor='lightgray')
+        fig_bar.update_yaxes(showline=True, linewidth=2, linecolor='black', gridcolor='lightgray')
+
+        # 이미지 변환
         img_pie = fig_pie.to_image(format="png", width=600, height=450, scale=2)
         img_bar = fig_bar.to_image(format="png", width=600, height=450, scale=2)
         
@@ -126,7 +129,7 @@ def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df
     return out
 
 # ==========================================
-# 4. 데이터 로딩 (안전 모드)
+# 4. 데이터 로딩
 # ==========================================
 def safe_date_parse(val, target_year=2026):
     try:
@@ -235,7 +238,6 @@ if up_files:
             ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
             
             fig_pie = px.pie(ch_df, values='총판매금액', names='채널', hole=0.4, title="매출 비중")
-            # [시각적 개선] 파이 차트에 텍스트 색상 및 위치 조정
             fig_pie.update_traces(textinfo='percent+label', textposition='inside')
 
             fig_bar = make_subplots(specs=[[{"secondary_y": True}]])
