@@ -4,4 +4,6 @@ openpyxl
 
 plotly
 python-pptx
-kaleido
+kaleido==0.2.1
+python-pptx
+
