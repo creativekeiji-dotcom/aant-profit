@@ -122,4 +122,52 @@ if uploaded_file is not None:
         col4.metric("🏆 최종 순이익", f"{int(net_profit):,}원", delta=f"{net_margin:.1f}%", delta_color="normal")
         st.divider()
 
-        #
+        # 그래프 (월별)
+        if df['월'].notnull().any():
+            st.subheader("📈 통합 월별 추이")
+            monthly_trend = df.groupby('월')[['총판매금액', '매출총이익']].sum().reset_index()
+            monthly_trend['이익률(%)'] = (monthly_trend['매출총이익'] / monthly_trend['총판매금액'] * 100).round(1)
+            
+            tab1, tab2 = st.tabs(["이익률", "매출액"])
+            with tab1:
+                fig_line = px.line(monthly_trend, x='월', y='이익률(%)', markers=True, text='이익률(%)')
+                fig_line.update_traces(textposition="bottom right", line_color='#E01E5A')
+                st.plotly_chart(fig_line, use_container_width=True)
+            with tab2:
+                fig_bar = px.bar(monthly_trend, x='월', y='총판매금액', text_auto='.2s')
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+        # 채널별 분석
+        st.subheader("채널별 상세 분석")
+        col_chart1, col_chart2 = st.columns(2)
+        with col_chart1:
+            fig_pie = px.pie(df, values='총판매금액', names='채널', title='채널 점유율')
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with col_chart2:
+            channel_group = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
+            fig_bar = px.bar(channel_group, x='채널', y='매출총이익', text_auto='.2s', title='채널별 이익금액')
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        # 엑셀 다운로드
+        st.divider()
+        st.subheader("💾 통합 데이터 다운로드")
+        
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            save_cols = ['일자', '원본시트', '채널', '상품명', '수량', '판매단가', '원가단가', '총판매금액', '수수료금액', '매출총이익']
+            df[save_cols].to_excel(writer, index=False, sheet_name='전체통합내역')
+            if '월' in df.columns:
+                monthly_trend.to_excel(writer, index=False, sheet_name='월별요약')
+        
+        st.download_button(
+            label="📥 통합 결과 엑셀로 받기",
+            data=buffer.getvalue(),
+            file_name="AANT_통합결산결과.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        with st.expander("📄 원본 데이터 미리보기"):
+            st.dataframe(df.head(100))
+
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")
