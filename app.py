@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 import io
 import re
 import datetime
+import traceback # 에러 추적용
 
 # ==========================================
 # 1. 설정
@@ -19,33 +20,33 @@ DEFAULT_FEE_RATES = {
 }
 
 # ==========================================
-# 2. 강력한 파일 판독기 (핵심 수정)
+# 2. 핵심 로직 개선
 # ==========================================
 def safe_date_parse(val, target_year=2026):
+    """어떤 날짜 형식이든 2026년 날짜로 변환 시도"""
     try:
-        val_str = str(val)
-        # 1. 01/19-12 패턴
+        val_str = str(val).strip()
+        
+        # 1. "01/19-12" or "01/19" 패턴 (이카운트)
         match = re.search(r'(\d{1,2})/(\d{1,2})', val_str)
         if match:
             m, d = match.groups()
             return pd.to_datetime(f"{target_year}-{m}-{d}")
-        # 2. 일반 날짜 패턴
+            
+        # 2. "2026-01-19" or "2026.01.19" 패턴
         return pd.to_datetime(val_str)
     except:
         return None
 
 def read_file_force(file):
-    """
-    확장자가 xlsx여도 내용이 csv면 csv로 읽어내는 강제 함수
-    """
+    """엑셀/CSV/한글파일 가리지 않고 읽어내는 함수"""
     # 1. 엑셀로 시도
     try:
-        # header=None으로 읽어서 헤더 구조 무시하고 raw 데이터 가져옴
         return pd.read_excel(file, header=None, sheet_name=None)
     except:
-        pass # 실패하면 CSV 시도
+        pass 
 
-    # 2. CSV로 시도 (한국형 cp949)
+    # 2. CSV (한국어 cp949)
     try:
         file.seek(0)
         df = pd.read_csv(file, header=None, encoding='cp949')
@@ -53,69 +54,52 @@ def read_file_force(file):
     except:
         pass
 
-    # 3. CSV로 시도 (일반 utf-8)
+    # 3. CSV (일반 utf-8)
     try:
         file.seek(0)
         df = pd.read_csv(file, header=None, encoding='utf-8')
         return {'Sheet1': df}
     except:
-        return None # 진짜 못 읽음
+        return None
 
 def load_data(files, fee_dict):
     all_dfs = []
     
     for file in files:
         sheets = read_file_force(file)
-        
-        if sheets is None:
-            st.toast(f"⚠️ '{file.name}' 파일 형식을 인식할 수 없어 건너뜁니다.", icon="🚫")
-            continue
+        if sheets is None: continue
 
         for name, raw in sheets.items():
             try:
-                # 데이터가 너무 적으면 패스
-                if len(raw) < 3: continue
-                
-                # [전략] 헤더를 믿지 않고, 위치(인덱스)로 뜯어냄
-                # 이카운트 양식은 보통 3번째 줄(인덱스2)부터 데이터가 시작되거나
-                # 2번째 줄(인덱스1)부터 시작됨.
-                # 안전하게: '열 개수'가 충분한지 보고, 필요한 열만 가져옴
-                
-                if raw.shape[1] < 8: continue
+                if len(raw) < 2: continue
+                if raw.shape[1] < 8: continue 
 
-                # A(0), B(1), D(3), E(4), F(5), H(7) 열 선택
+                # [개선] 2단 헤더 무시하고 데이터 위치(인덱스)로 가져오기
                 temp = raw.iloc[:, [0, 1, 3, 4, 5, 7]].copy()
                 temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
-                # [데이터 정제]
-                # '일자_raw'가 날짜처럼 생긴 행만 남기기 (헤더 제거 효과)
-                # 정규식으로 '숫자/숫자' 패턴이 있는 행만 유효 데이터로 인정
-                temp = temp[temp['일자_raw'].astype(str).str.contains(r'\d+/\d+', na=False)]
+                # [개선] 여기서 미리 필터링하지 않고, 나중에 날짜 변환 실패하면 그때 버림 (더 안전함)
                 
-                if temp.empty: continue
-
-                # 상품명 문자 변환
+                # 상품명/채널 결측치 처리
                 temp['상품명'] = temp['상품명'].fillna("상품명없음").astype(str)
                 
-                # 그로스 체크
                 if '그로스' in str(name) or '그로스' in file.name:
                     temp['채널'] = '쿠팡그로스'
                 
                 all_dfs.append(temp)
-                
-            except Exception as e:
+            except:
                 continue
             
     if not all_dfs: return None
     
     df = pd.concat(all_dfs, ignore_index=True)
     
-    # 날짜 변환
+    # [날짜 변환] 여기서 진짜 데이터만 남음
     df['일자'] = df['일자_raw'].apply(lambda x: safe_date_parse(x))
-    df = df.dropna(subset=['일자'])
+    df = df.dropna(subset=['일자']) # 날짜가 안 되는 행(헤더, 합계 등)은 여기서 자동 삭제
     df['월'] = df['일자'].dt.strftime('%Y-%m')
     
-    # 숫자 변환
+    # [숫자 변환]
     for c in ['수량', '판매단가', '원가단가']:
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         
@@ -134,105 +118,106 @@ def load_data(files, fee_dict):
 # ==========================================
 st.title("📊 AANT CEO 경영 대시보드")
 
-with st.expander("📂 데이터 파일 관리", expanded=True):
-    c1, c2, c3 = st.columns(3)
-    up_files = c1.file_uploader("1️⃣ 판매 파일 (엑셀/CSV)", accept_multiple_files=True)
-    cost_file = c2.file_uploader("2️⃣ 고정비 파일 (선택)")
-    fee_file = c3.file_uploader("3️⃣ 수수료 파일 (선택)")
+try:
+    with st.expander("📂 데이터 파일 관리", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        # key를 바꿔서 위젯 상태 초기화 (에러 방지용)
+        up_files = c1.file_uploader("1️⃣ 판매 파일", accept_multiple_files=True, key="sales_v2")
+        cost_file = c2.file_uploader("2️⃣ 고정비 파일", key="cost_v2")
+        fee_file = c3.file_uploader("3️⃣ 수수료 파일", key="fee_v2")
 
-current_fee_rates = DEFAULT_FEE_RATES.copy()
-if fee_file:
-    try:
-        sheets = read_file_force(fee_file)
-        if sheets:
-            fdf = list(sheets.values())[0]
-            new_rates = dict(zip(fdf.iloc[:, 0], fdf.iloc[:, 1]))
-            current_fee_rates.update(new_rates)
-    except: pass
+    current_fee_rates = DEFAULT_FEE_RATES.copy()
+    if fee_file:
+        try:
+            sheets = read_file_force(fee_file)
+            if sheets:
+                fdf = list(sheets.values())[0]
+                new_rates = dict(zip(fdf.iloc[:, 0], fdf.iloc[:, 1]))
+                current_fee_rates.update(new_rates)
+        except: pass
 
-if up_files:
-    df = load_data(up_files, current_fee_rates)
-    
-    if df is not None and not df.empty:
-        # KPI
-        sales = df['총판매금액'].sum()
-        gross = df['매출총이익'].sum()
+    if up_files:
+        df = load_data(up_files, current_fee_rates)
         
-        fixed_cost = 0
-        if cost_file:
-            try:
-                sheets = read_file_force(cost_file)
-                if sheets:
-                    cdf = list(sheets.values())[0]
-                    # 숫자 열만 찾아서 합계
-                    fixed_cost = cdf.select_dtypes(include=['number']).sum().sum()
-                    # 만약 숫자가 안 잡히면 명시적 컬럼 합계 시도
-                    if fixed_cost == 0 and '광고비' in cdf.columns: 
-                        fixed_cost = cdf['광고비'].sum() + cdf.get('택배비',0).sum() + cdf.get('운영비',0).sum()
-            except: pass
-
-        net = gross - fixed_cost
-        margin = (net / sales * 100) if sales > 0 else 0
-
-        st.markdown("---")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 총 매출", f"{int(sales):,}원")
-        k2.metric("📦 매출이익", f"{int(gross):,}원")
-        k3.metric("💸 고정비", f"-{int(fixed_cost):,}원")
-        k4.metric("🏆 순이익", f"{int(net):,}원", delta=f"{margin:.1f}%")
-        st.markdown("---")
-
-        tab1, tab2, tab3 = st.tabs(["📊 분석 리포트", "📋 수수료율", "📥 파일 다운로드"])
-        
-        with tab1:
-            st.subheader("1️⃣ 채널별 성과")
-            ch_df = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
-            ch_df['이익률'] = (ch_df['매출총이익'] / ch_df['총판매금액'] * 100).fillna(0)
-            ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
-
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.plotly_chart(px.pie(ch_df, values='총판매금액', names='채널', hole=0.4), use_container_width=True)
-            with col2:
-                fig = make_subplots(specs=[[{"secondary_y": True}]])
-                fig.add_trace(go.Bar(x=ch_df['채널'], y=ch_df['매출총이익'], name="이익금"), secondary_y=False)
-                fig.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
-                st.plotly_chart(fig, use_container_width=True)
+        if df is not None and not df.empty:
+            sales = df['총판매금액'].sum()
+            gross = df['매출총이익'].sum()
             
-            st.divider()
-            st.subheader("2️⃣ 상품별 판매 랭킹 (Top 10)")
-            pr_df = df.groupby('상품명')[['수량', '총판매금액', '매출총이익']].sum().reset_index()
-            
-            # 상품명없음 제거
-            pr_df = pr_df[pr_df['상품명'] != "상품명없음"]
-            
-            if not pr_df.empty:
-                top10 = pr_df.sort_values(by='매출총이익', ascending=False).head(10)
-                top10.index = range(1, len(top10)+1)
-                st.dataframe(top10.style.format("{:,.0f}"), use_container_width=True)
-            else:
-                st.warning("유효한 상품 데이터를 찾지 못했습니다.")
+            fixed_cost = 0
+            if cost_file:
+                try:
+                    sheets = read_file_force(cost_file)
+                    if sheets:
+                        cdf = list(sheets.values())[0]
+                        fixed_cost = cdf.select_dtypes(include=['number']).sum().sum()
+                except: pass
 
-        with tab2:
-            st.subheader("📋 적용 수수료율")
-            f_disp = pd.DataFrame(list(current_fee_rates.items()), columns=['채널', '요율'])
-            f_disp = f_disp[f_disp['채널'].isin(df['채널'].unique())]
-            st.dataframe(f_disp)
+            net = gross - fixed_cost
+            margin = (net / sales * 100) if sales > 0 else 0
 
-        with tab3:
-            st.subheader("💾 보고서 다운로드")
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                pd.DataFrame({'구분':['매출','이익','고정비','순이익'], '금액':[sales,gross,fixed_cost,net]}).to_excel(writer, sheet_name='요약', index=False)
-                ch_df.to_excel(writer, sheet_name='채널실적', index=False)
-                if not pr_df.empty: pr_df.to_excel(writer, sheet_name='상품랭킹', index=False)
-                df.to_excel(writer, sheet_name='상세내역', index=False)
+            st.markdown("---")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("💰 총 매출", f"{int(sales):,}원")
+            k2.metric("📦 매출이익", f"{int(gross):,}원")
+            k3.metric("💸 고정비", f"-{int(fixed_cost):,}원")
+            k4.metric("🏆 순이익", f"{int(net):,}원", delta=f"{margin:.1f}%")
+            st.markdown("---")
+
+            tab1, tab2, tab3 = st.tabs(["📊 분석 리포트", "📋 수수료율", "📥 파일 다운로드"])
             
-            today_str = datetime.date.today().strftime("%Y%m%d")
-            st.download_button("📥 CEO 보고서 엑셀 받기", buffer.getvalue(), f"AANT_Report_{today_str}.xlsx")
+            with tab1:
+                st.subheader("1️⃣ 채널별 성과")
+                ch_df = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
+                ch_df['이익률'] = (ch_df['매출총이익'] / ch_df['총판매금액'] * 100).fillna(0)
+                ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
 
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.plotly_chart(px.pie(ch_df, values='총판매금액', names='채널', hole=0.4), use_container_width=True)
+                with col2:
+                    fig = make_subplots(specs=[[{"secondary_y": True}]])
+                    fig.add_trace(go.Bar(x=ch_df['채널'], y=ch_df['매출총이익'], name="이익금"), secondary_y=False)
+                    fig.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.divider()
+                st.subheader("2️⃣ 상품별 판매 랭킹 (Top 10)")
+                pr_df = df.groupby('상품명')[['수량', '총판매금액', '매출총이익']].sum().reset_index()
+                pr_df = pr_df[pr_df['상품명'] != "상품명없음"]
+                
+                if not pr_df.empty:
+                    top10 = pr_df.sort_values(by='매출총이익', ascending=False).head(10)
+                    top10.index = range(1, len(top10)+1)
+                    st.dataframe(top10.style.format("{:,.0f}"), use_container_width=True)
+                else:
+                    st.warning("상품 데이터가 없습니다.")
+
+            with tab2:
+                st.subheader("📋 적용 수수료율")
+                f_disp = pd.DataFrame(list(current_fee_rates.items()), columns=['채널', '요율'])
+                f_disp = f_disp[f_disp['채널'].isin(df['채널'].unique())]
+                st.dataframe(f_disp)
+
+            with tab3:
+                st.subheader("💾 보고서 다운로드")
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    pd.DataFrame({'구분':['매출','이익','고정비','순이익'], '금액':[sales,gross,fixed_cost,net]}).to_excel(writer, sheet_name='요약', index=False)
+                    ch_df.to_excel(writer, sheet_name='채널실적', index=False)
+                    if not pr_df.empty: pr_df.to_excel(writer, sheet_name='상품랭킹', index=False)
+                    df.to_excel(writer, sheet_name='상세내역', index=False)
+                
+                today_str = datetime.date.today().strftime("%Y%m%d")
+                st.download_button("📥 CEO 보고서 엑셀 받기", buffer.getvalue(), f"AANT_Report_{today_str}.xlsx")
+
+        else:
+            st.error("❌ 데이터를 읽을 수 없습니다.")
+            st.info("💡 CSV나 엑셀 파일이 맞는지 확인해주세요. (암호가 걸려있으면 안 됩니다)")
     else:
-        st.error("❌ 데이터를 읽을 수 없습니다.")
-        st.info("💡 CSV 파일 인코딩 문제일 가능성이 높아, '강제 읽기 모드(cp949)'를 적용했습니다. 그래도 안 된다면 파일 내용을 캡처해서 보여주세요.")
-else:
-    st.info("파일을 업로드해주세요.")
+        st.info("파일을 업로드해주세요.")
+
+except Exception as e:
+    # 여기가 핵심입니다. 프로그램이 멈추지 않고 에러 내용을 보여줍니다.
+    st.error("⚠️ 시스템 오류 발생")
+    st.code(traceback.format_exc()) # 에러 상세 내용 출력
+    st.warning("위 에러 메시지를 캡처해서 보여주시면 즉시 해결해드립니다.")
