@@ -49,7 +49,7 @@ def get_fee_rate(channel_name, user_fee_dict=None):
     return 0.0
 
 # ==========================================
-# 3. PPT 생성 함수 (강제 화이트 모드 적용!)
+# 3. PPT 생성 함수 (화이트 테마 유지)
 # ==========================================
 def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df):
     prs = Presentation()
@@ -77,29 +77,24 @@ def create_ppt(sales, gross, fixed_cost, net, margin, fig_pie, fig_bar, top10_df
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     slide.shapes.title.text = "2. 채널별 성과"
     try:
-        # [핵심 수정] template="plotly_white" -> 이게 핵심입니다.
-        # 강제로 "흰 바탕에 검은 글씨 테마"를 적용합니다.
-        
-        # 1. 파이 차트 디자인 강제 변경
+        # 강제 화이트 모드 적용 (배경 흰색, 글씨 검정)
         fig_pie.update_layout(
-            template="plotly_white", # 화이트 테마 적용
-            paper_bgcolor="white",   # 배경 흰색
-            plot_bgcolor="white",    # 차트 배경 흰색
-            font=dict(color="black") # 글씨 검정색
+            template="plotly_white",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            font=dict(color="black")
         )
 
-        # 2. 바 차트 디자인 강제 변경
         fig_bar.update_layout(
             template="plotly_white",
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=dict(color="black")
         )
-        # 바 차트의 X축, Y축 글씨와 선도 검정색으로 강제
+        # 축 색상도 검정으로 명시
         fig_bar.update_xaxes(showline=True, linewidth=2, linecolor='black', gridcolor='lightgray')
         fig_bar.update_yaxes(showline=True, linewidth=2, linecolor='black', gridcolor='lightgray')
 
-        # 이미지 변환
         img_pie = fig_pie.to_image(format="png", width=600, height=450, scale=2)
         img_bar = fig_bar.to_image(format="png", width=600, height=450, scale=2)
         
@@ -232,17 +227,36 @@ if up_files:
 
             t1, t2, t3 = st.tabs(["📊 리포트", "✅ 수수료 검증", "💾 다운로드 (PPT/Excel)"])
             
-            # 그래프
+            # ------------------------------------------------------------------
+            # [그래프 생성 구역]
+            # ------------------------------------------------------------------
             ch_df = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
             ch_df['이익률'] = (ch_df['매출총이익'] / ch_df['총판매금액'] * 100).fillna(0)
             ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
             
+            # 1. 파이 차트
             fig_pie = px.pie(ch_df, values='총판매금액', names='채널', hole=0.4, title="매출 비중")
             fig_pie.update_traces(textinfo='percent+label', textposition='inside')
 
+            # 2. 바 차트 (색상 입히기!!)
+            # 채널 개수만큼 색상을 준비합니다. (Plotly 기본 팔레트 사용)
+            colors = px.colors.qualitative.Plotly 
+            # 데이터 개수에 맞춰서 색상을 리스트로 만듦 (순환 적용)
+            bar_colors = [colors[i % len(colors)] for i in range(len(ch_df))]
+
             fig_bar = make_subplots(specs=[[{"secondary_y": True}]])
-            fig_bar.add_trace(go.Bar(x=ch_df['채널'], y=ch_df['매출총이익'], name="이익금"), secondary_y=False)
+            
+            # [핵심] marker_color에 색상 리스트를 넣어주면 알록달록해집니다.
+            fig_bar.add_trace(go.Bar(
+                x=ch_df['채널'], 
+                y=ch_df['매출총이익'], 
+                name="이익금",
+                marker_color=bar_colors # <--- 여기가 마법의 코드입니다!
+            ), secondary_y=False)
+            
             fig_bar.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
+
+            # ------------------------------------------------------------------
 
             pr_df = df.groupby('상품명')[['수량', '총판매금액', '매출총이익']].sum().reset_index()
             pr_df = pr_df[pr_df['상품명'] != "상품명없음"]
