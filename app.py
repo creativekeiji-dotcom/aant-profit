@@ -172,3 +172,22 @@ if uploaded_files: # 파일이 하나라도 있으면 실행
 
         # 상세 데이터
         col_d1, col_d2 = st.columns([2,1])
+        with col_d1:
+            st.subheader("월별 손익계산서")
+            st.dataframe(final_summary)
+        with col_d2:
+            st.subheader("채널별 매출")
+            st.plotly_chart(px.pie(df, values='총판매금액', names='채널'), use_container_width=True)
+
+        # 엑셀 다운로드
+        st.divider()
+        df['일자'] = df['일자'].dt.strftime('%Y-%m-%d')
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            final_summary.to_excel(writer, index=False, sheet_name='월별손익요약')
+            df.to_excel(writer, index=False, sheet_name='전체통합내역')
+        
+        st.download_button("📥 통합 보고서 다운로드 (Excel)", buffer.getvalue(), "AANT_통합보고서.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    except Exception as e:
+        st.error(f"오류 발생: {e}")
