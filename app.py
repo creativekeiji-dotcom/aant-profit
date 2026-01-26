@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import io
 import re
 import datetime
-import traceback # 에러 추적용
+import traceback
 
 # ==========================================
 # 1. 설정
@@ -20,36 +20,34 @@ DEFAULT_FEE_RATES = {
 }
 
 # ==========================================
-# 2. 핵심 로직 (유연함 강화)
+# 2. 데이터 처리 로직
 # ==========================================
 def safe_date_parse(val, target_year=2026):
-    """어떤 날짜 형식이든 2026년 날짜로 변환 시도"""
     try:
         val_str = str(val).strip()
-        # 1. "01/19-12" or "01/19" 패턴 (이카운트)
+        # "01/19" 패턴
         match = re.search(r'(\d{1,2})/(\d{1,2})', val_str)
         if match:
             m, d = match.groups()
             return pd.to_datetime(f"{target_year}-{m}-{d}")
-        # 2. "2026-01-19" or "2026.1.19" 등
+        # "2026-01-19" 패턴
         return pd.to_datetime(val_str)
     except:
         return None
 
 def read_file_force(file):
-    """확장자 무시하고 무조건 읽어내기"""
-    # 1. 엑셀로 시도
+    # 1. 엑셀 시도
     try:
         return pd.read_excel(file, header=None, sheet_name=None)
     except:
         pass 
-    # 2. CSV (한국어 cp949)
+    # 2. CSV (한국어)
     try:
         file.seek(0)
         return {'Sheet1': pd.read_csv(file, header=None, encoding='cp949')}
     except:
         pass
-    # 3. CSV (utf-8)
+    # 3. CSV (UTF-8)
     try:
         file.seek(0)
         return {'Sheet1': pd.read_csv(file, header=None, encoding='utf-8')}
@@ -65,17 +63,15 @@ def load_data(files, fee_dict):
 
         for name, raw in sheets.items():
             try:
-                # 데이터가 너무 적으면 패스
                 if len(raw) < 2: continue
                 if raw.shape[1] < 8: continue 
 
-                # [중요] 2단 헤더 무시하고 데이터 위치(인덱스)로 가져오기
+                # 데이터 추출 (2단 헤더 무시, 위치 기반)
                 # A(0), B(1), D(3), E(4), F(5), H(7)
                 temp = raw.iloc[:, [0, 1, 3, 4, 5, 7]].copy()
                 temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
-                # [안전 장치] '일자_raw'에 숫자가 포함된 행만 진짜 데이터로 인정
-                # 이렇게 하면 헤더(제목)나 합계 행은 자연스럽게 빠짐
+                # 유효 데이터 필터링 (일자에 숫자가 있는 행만)
                 temp = temp[temp['일자_raw'].astype(str).str.contains(r'\d', na=False)]
                 
                 if temp.empty: continue
@@ -92,9 +88,9 @@ def load_data(files, fee_dict):
     
     df = pd.concat(all_dfs, ignore_index=True)
     
-    # 데이터 변환
+    # 변환
     df['일자'] = df['일자_raw'].apply(lambda x: safe_date_parse(x))
-    df = df.dropna(subset=['일자']) # 날짜 변환 실패한 행 삭제
+    df = df.dropna(subset=['일자'])
     df['월'] = df['일자'].dt.strftime('%Y-%m')
     
     for c in ['수량', '판매단가', '원가단가']:
@@ -117,10 +113,9 @@ st.title("📊 AANT CEO 경영 대시보드")
 try:
     with st.expander("📂 데이터 파일 관리", expanded=True):
         c1, c2, c3 = st.columns(3)
-        # key를 변경하여 위젯 상태 초기화
-        up_files = c1.file_uploader("1️⃣ 판매 파일 (필수)", accept_multiple_files=True, key="sales_v3")
-        cost_file = c2.file_uploader("2️⃣ 고정비 파일", key="cost_v3")
-        fee_file = c3.file_uploader("3️⃣ 수수료 파일", key="fee_v3")
+        up_files = c1.file_uploader("1️⃣ 판매 파일 (필수)", accept_multiple_files=True, key="sales_final")
+        cost_file = c2.file_uploader("2️⃣ 고정비 파일", key="cost_final")
+        fee_file = c3.file_uploader("3️⃣ 수수료 파일", key="fee_final")
 
     current_fee_rates = DEFAULT_FEE_RATES.copy()
     if fee_file:
@@ -184,7 +179,16 @@ try:
                 if not pr_df.empty:
                     top10 = pr_df.sort_values(by='매출총이익', ascending=False).head(10)
                     top10.index = range(1, len(top10)+1)
-                    st.dataframe(top10.style.format("{:,.0f}"), use_container_width=True)
+                    
+                    # [여기가 수정된 부분] 상품명(문자)은 놔두고, 숫자만 포맷팅
+                    st.dataframe(
+                        top10.style.format({
+                            '수량': '{:,.0f}',
+                            '총판매금액': '{:,.0f}',
+                            '매출총이익': '{:,.0f}'
+                        }), 
+                        use_container_width=True
+                    )
                 else:
                     st.warning("상품 데이터가 없습니다.")
 
@@ -208,12 +212,9 @@ try:
 
         else:
             st.error("❌ 데이터를 읽을 수 없습니다.")
-            st.info("파일 형식을 확인해주세요. (암호가 걸린 파일은 아닌지 확인)")
     else:
         st.info("파일을 업로드해주세요.")
 
 except Exception as e:
-    # 프로그램이 멈추지 않고, 정확히 어디가 문제인지 보여줍니다.
-    st.error("⚠️ 오류가 발생했습니다.")
-    st.code(traceback.format_exc()) 
-    st.warning("위 빨간색 에러 메시지를 캡처해서 보여주세요. 즉시 해결해 드립니다.") 
+    st.error("⚠️ 오류 발생")
+    st.code(traceback.format_exc())
