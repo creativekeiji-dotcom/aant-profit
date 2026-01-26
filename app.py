@@ -7,6 +7,7 @@ import io
 import re
 import datetime
 import traceback # 에러 추적용
+
 # ==========================================
 # 1. 설정
 # ==========================================
@@ -19,45 +20,39 @@ DEFAULT_FEE_RATES = {
 }
 
 # ==========================================
-# 2. 핵심 로직 개선
+# 2. 핵심 로직 (유연함 강화)
 # ==========================================
 def safe_date_parse(val, target_year=2026):
     """어떤 날짜 형식이든 2026년 날짜로 변환 시도"""
     try:
         val_str = str(val).strip()
-        
         # 1. "01/19-12" or "01/19" 패턴 (이카운트)
         match = re.search(r'(\d{1,2})/(\d{1,2})', val_str)
         if match:
             m, d = match.groups()
             return pd.to_datetime(f"{target_year}-{m}-{d}")
-            
-        # 2. "2026-01-19" or "2026.01.19" 패턴
+        # 2. "2026-01-19" or "2026.1.19" 등
         return pd.to_datetime(val_str)
     except:
         return None
 
 def read_file_force(file):
-    """엑셀/CSV/한글파일 가리지 않고 읽어내는 함수"""
+    """확장자 무시하고 무조건 읽어내기"""
     # 1. 엑셀로 시도
     try:
         return pd.read_excel(file, header=None, sheet_name=None)
     except:
         pass 
-
     # 2. CSV (한국어 cp949)
     try:
         file.seek(0)
-        df = pd.read_csv(file, header=None, encoding='cp949')
-        return {'Sheet1': df}
+        return {'Sheet1': pd.read_csv(file, header=None, encoding='cp949')}
     except:
         pass
-
-    # 3. CSV (일반 utf-8)
+    # 3. CSV (utf-8)
     try:
         file.seek(0)
-        df = pd.read_csv(file, header=None, encoding='utf-8')
-        return {'Sheet1': df}
+        return {'Sheet1': pd.read_csv(file, header=None, encoding='utf-8')}
     except:
         return None
 
@@ -70,18 +65,22 @@ def load_data(files, fee_dict):
 
         for name, raw in sheets.items():
             try:
+                # 데이터가 너무 적으면 패스
                 if len(raw) < 2: continue
                 if raw.shape[1] < 8: continue 
 
-                # [개선] 2단 헤더 무시하고 데이터 위치(인덱스)로 가져오기
+                # [중요] 2단 헤더 무시하고 데이터 위치(인덱스)로 가져오기
+                # A(0), B(1), D(3), E(4), F(5), H(7)
                 temp = raw.iloc[:, [0, 1, 3, 4, 5, 7]].copy()
                 temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
-                # [개선] 여기서 미리 필터링하지 않고, 나중에 날짜 변환 실패하면 그때 버림 (더 안전함)
+                # [안전 장치] '일자_raw'에 숫자가 포함된 행만 진짜 데이터로 인정
+                # 이렇게 하면 헤더(제목)나 합계 행은 자연스럽게 빠짐
+                temp = temp[temp['일자_raw'].astype(str).str.contains(r'\d', na=False)]
                 
-                # 상품명/채널 결측치 처리
+                if temp.empty: continue
+
                 temp['상품명'] = temp['상품명'].fillna("상품명없음").astype(str)
-                
                 if '그로스' in str(name) or '그로스' in file.name:
                     temp['채널'] = '쿠팡그로스'
                 
@@ -93,19 +92,17 @@ def load_data(files, fee_dict):
     
     df = pd.concat(all_dfs, ignore_index=True)
     
-    # [날짜 변환] 여기서 진짜 데이터만 남음
+    # 데이터 변환
     df['일자'] = df['일자_raw'].apply(lambda x: safe_date_parse(x))
-    df = df.dropna(subset=['일자']) # 날짜가 안 되는 행(헤더, 합계 등)은 여기서 자동 삭제
+    df = df.dropna(subset=['일자']) # 날짜 변환 실패한 행 삭제
     df['월'] = df['일자'].dt.strftime('%Y-%m')
     
-    # [숫자 변환]
     for c in ['수량', '판매단가', '원가단가']:
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         
     df['총판매금액'] = df['수량'] * df['판매단가']
     df['총원가금액'] = df['수량'] * df['원가단가']
     df['채널'] = df['채널'].astype(str).str.strip()
-    
     df['수수료율'] = df['채널'].map(fee_dict).fillna(0)
     df['수수료금액'] = df['총판매금액'] * df['수수료율']
     df['매출총이익'] = df['총판매금액'] - df['총원가금액'] - df['수수료금액']
@@ -120,10 +117,10 @@ st.title("📊 AANT CEO 경영 대시보드")
 try:
     with st.expander("📂 데이터 파일 관리", expanded=True):
         c1, c2, c3 = st.columns(3)
-        # key를 바꿔서 위젯 상태 초기화 (에러 방지용)
-        up_files = c1.file_uploader("1️⃣ 판매 파일", accept_multiple_files=True, key="sales_v2")
-        cost_file = c2.file_uploader("2️⃣ 고정비 파일", key="cost_v2")
-        fee_file = c3.file_uploader("3️⃣ 수수료 파일", key="fee_v2")
+        # key를 변경하여 위젯 상태 초기화
+        up_files = c1.file_uploader("1️⃣ 판매 파일 (필수)", accept_multiple_files=True, key="sales_v3")
+        cost_file = c2.file_uploader("2️⃣ 고정비 파일", key="cost_v3")
+        fee_file = c3.file_uploader("3️⃣ 수수료 파일", key="fee_v3")
 
     current_fee_rates = DEFAULT_FEE_RATES.copy()
     if fee_file:
@@ -211,13 +208,12 @@ try:
 
         else:
             st.error("❌ 데이터를 읽을 수 없습니다.")
-            st.info("💡 CSV나 엑셀 파일이 맞는지 확인해주세요. (암호가 걸려있으면 안 됩니다)")
+            st.info("파일 형식을 확인해주세요. (암호가 걸린 파일은 아닌지 확인)")
     else:
         st.info("파일을 업로드해주세요.")
 
 except Exception as e:
-    # 여기가 핵심입니다. 프로그램이 멈추지 않고 에러 내용을 보여줍니다.
-    st.error("⚠️ 시스템 오류 발생")
-    st.code(traceback.format_exc()) # 에러 상세 내용 출력
-    st.warning("위 에러 메시지를 캡처해서 보여주시면 즉시 해결해드립니다.")
-
+    # 프로그램이 멈추지 않고, 정확히 어디가 문제인지 보여줍니다.
+    st.error("⚠️ 오류가 발생했습니다.")
+    st.code(traceback.format_exc()) 
+    st.warning("위 빨간색 에러 메시지를 캡처해서 보여주세요. 즉시 해결해 드립니다.") 
