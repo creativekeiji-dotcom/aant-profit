@@ -19,12 +19,11 @@ FEE_RATES = {
 }
 
 # ==========================================
-# 2. 데이터 처리 (안정성 강화)
+# 2. 데이터 처리
 # ==========================================
 def safe_date_parse(val, target_year=2026):
     try:
         val_str = str(val)
-        # 이카운트 특유의 "01/19-12" 패턴 처리
         match = re.search(r'(\d{1,2})/(\d{1,2})', val_str)
         if match:
             m, d = match.groups()
@@ -41,9 +40,10 @@ def load_data(files):
             for name, raw in sheets.items():
                 if len(raw) < 2: continue
                 
-                # [중요] 컬럼 인덱스 매핑 (A, B, D, E, F, H)
-                # 데이터가 있는 행부터 잘라내기
                 temp = raw.iloc[1:].copy()
+                # 컬럼 위치가 맞는지 확인 (최소 8열 이상이어야 함)
+                if temp.shape[1] < 8: continue 
+
                 temp = temp.iloc[:, [0, 1, 3, 4, 5, 7]]
                 temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
@@ -57,7 +57,6 @@ def load_data(files):
     
     df = pd.concat(all_dfs, ignore_index=True)
     
-    # 날짜 및 숫자 변환
     df['일자'] = df['일자_raw'].apply(lambda x: safe_date_parse(x))
     df = df.dropna(subset=['일자'])
     df['월'] = df['일자'].dt.strftime('%Y-%m')
@@ -79,10 +78,10 @@ def load_data(files):
 # ==========================================
 st.title("📊 AANT CEO 경영 대시보드")
 
-with st.expander("📂 파일 업로드 열기", expanded=True):
+with st.expander("📂 데이터 파일 업로드 (여기를 클릭하세요)", expanded=True):
     col1, col2 = st.columns(2)
-    up_files = col1.file_uploader("판매 엑셀 파일 (다중 업로드 가능)", type=['xlsx', 'xls'], accept_multiple_files=True)
-    cost_file = col2.file_uploader("고정비 엑셀 (선택)", type=['xlsx', 'xls'])
+    up_files = col1.file_uploader("판매 엑셀 파일 (드래그해서 여러 개 가능)", type=['xlsx', 'xls'], accept_multiple_files=True)
+    cost_file = col2.file_uploader("고정비 엑셀 (선택사항)", type=['xlsx', 'xls'])
 
 if up_files:
     df = load_data(up_files)
@@ -102,7 +101,7 @@ if up_files:
         net = gross - fixed_cost
         margin = (net / sales * 100) if sales > 0 else 0
 
-        # KPI 표시
+        # KPI 화면 표시
         st.markdown("---")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 총 매출", f"{int(sales):,}원")
@@ -112,60 +111,87 @@ if up_files:
         st.markdown("---")
 
         # 1. 채널 분석
-        st.subheader("1️⃣ 채널별 성과")
+        st.subheader("1️⃣ 채널별 성과 분석")
         ch_df = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
         ch_df['이익률'] = (ch_df['매출총이익'] / ch_df['총판매금액'] * 100).fillna(0)
         ch_df = ch_df.sort_values(by='총판매금액', ascending=False)
 
         col_c1, col_c2 = st.columns([1, 2])
         with col_c1:
-            fig_pie = px.pie(ch_df, values='총판매금액', names='채널', hole=0.4, title="매출 비중")
+            fig_pie = px.pie(ch_df, values='총판매금액', names='채널', hole=0.4, title="채널 점유율")
             fig_pie.update_traces(textinfo='percent+label')
             st.plotly_chart(fig_pie, use_container_width=True)
         with col_c2:
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             fig.add_trace(go.Bar(x=ch_df['채널'], y=ch_df['매출총이익'], name="이익금"), secondary_y=False)
-            fig.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
-            fig.update_layout(title="이익금 vs 이익률 분석")
+            fig.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red', width=3)), secondary_y=True)
+            fig.update_layout(title="채널별 이익금 vs 이익률")
             st.plotly_chart(fig, use_container_width=True)
 
-        # 2. 상품 랭킹 (오류 수정 구간)
+        # 2. 상품 랭킹
         st.divider()
         st.subheader("2️⃣ 상품별 판매 랭킹 (Top 10)")
-
-        # 상품명 데이터 확인
+        
         pr_df = df.groupby('상품명')[['수량', '총판매금액', '매출총이익']].sum().reset_index()
         
-        # 데이터가 있는지 확인해서 메시지 출력
-        if pr_df.empty:
-            st.error("❌ 상품 데이터를 불러오지 못했습니다. 엑셀의 '품목명' 열을 확인해주세요.")
-        else:
-            st.caption(f"총 {len(pr_df):,}개의 상품이 집계되었습니다.")
-            
-            # 정렬 옵션
-            sort_key = st.radio("정렬 기준 선택", ["매출액 높은 순", "이익금 높은 순"], horizontal=True)
+        if not pr_df.empty:
+            st.caption(f"분석된 전체 상품 수: {len(pr_df):,}개")
+            sort_key = st.radio("정렬 기준", ["매출액 순", "이익금 순"], horizontal=True)
             
             if "매출" in sort_key:
                 top10 = pr_df.sort_values(by='총판매금액', ascending=False).head(10)
             else:
                 top10 = pr_df.sort_values(by='매출총이익', ascending=False).head(10)
-
-            # 인덱스 1부터 시작 (순위 느낌)
+            
             top10.index = range(1, len(top10) + 1)
-
-            # [핵심 수정] 화려한 스타일링 제거 -> 기본 표로 표시 (안전빵)
-            # 숫자에 콤마(,)만 찍어서 깔끔하게 보여줍니다.
+            
             st.dataframe(
                 top10.style.format({
-                    "수량": "{:,.0f}",
-                    "총판매금액": "{:,.0f}",
-                    "매출총이익": "{:,.0f}"
+                    "수량": "{:,.0f}", "총판매금액": "{:,.0f}", "매출총이익": "{:,.0f}"
                 }),
                 use_container_width=True
             )
+        else:
+            st.error("상품 데이터를 불러오지 못했습니다.")
+
+        # ==========================================
+        # [핵심] 보고서 다운로드 기능 (여기를 주목하세요!)
+        # ==========================================
+        st.divider()
+        st.subheader("💾 CEO 보고용 파일 저장")
+        st.info("👇 아래 버튼을 누르면 '경영 요약'이 포함된 엑셀 보고서가 다운로드됩니다.")
+
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            # 1. 경영 요약 시트 (깔끔하게 5줄 요약)
+            summary_data = {
+                '구분': ['총 매출액', '매출총이익', '총 고정비', '최종 순이익', '순이익률'],
+                '금액': [sales, gross, fixed_cost, net, margin]
+            }
+            df_sum = pd.DataFrame(summary_data)
+            df_sum.to_excel(writer, sheet_name='1_경영요약', index=False)
+
+            # 2. 채널별 실적 시트
+            ch_df.to_excel(writer, sheet_name='2_채널별실적', index=False)
+
+            # 3. 베스트 상품 시트
+            if not pr_df.empty:
+                top10.to_excel(writer, sheet_name='3_베스트상품TOP10')
+
+            # 4. 전체 상세 내역 시트
+            df.to_excel(writer, sheet_name='4_상세데이터', index=False)
+
+        # 다운로드 버튼 생성
+        today_str = datetime.date.today().strftime("%Y%m%d")
+        st.download_button(
+            label="📥 [클릭] CEO 보고서 엑셀 다운로드",
+            data=buffer.getvalue(),
+            file_name=f"AANT_경영보고서_{today_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     else:
         st.warning("데이터를 읽을 수 없습니다. 양식을 확인해주세요.")
 
 else:
-    st.info("👆 파일을 업로드하면 분석 결과가 나타납니다.")
+    st.info("👆 위에서 파일을 업로드해주세요.")
