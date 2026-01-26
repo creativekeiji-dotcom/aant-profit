@@ -44,48 +44,39 @@ uploaded_file = st.file_uploader("이카운트 엑셀 파일을 업로드하세�
 
 if uploaded_file is not None:
     try:
-        # [핵심 변경] sheet_name=None : 모든 시트를 다 읽어옴 (딕셔너리 형태)
+        # 모든 시트 읽기
         all_sheets = pd.read_excel(uploaded_file, header=0, sheet_name=None)
-        
         all_data_frames = []
         
-        # 각 시트(탭)를 하나씩 꺼내서 처리
         for sheet_name, raw_df in all_sheets.items():
             try:
-                # 데이터가 너무 적으면(빈 시트 등) 패스
-                if len(raw_df) < 2:
-                    continue
+                if len(raw_df) < 2: continue
 
-                # 이카운트 2단 헤더 처리 (2번째 줄부터 데이터로 인식)
-                # 구조가 동일하다고 가정하고 처리
+                # 이카운트 2단 헤더 처리
                 df_temp = raw_df.iloc[1:].copy()
-                
-                # 필수 컬럼 위치 가져오기 (A, B, D, E, F, H 열)
-                # 만약 시트마다 양식이 조금 다르다면 에러가 날 수 있으니 try-except로 방어
                 df_temp = df_temp.iloc[:, [0, 1, 3, 4, 5, 7]]
                 df_temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
-                # 어느 탭에서 왔는지 기록 (나중에 확인용)
+                # -----------------------------------------------------------
+                # [핵심 수정] 시트 이름에 '그로스'가 있으면 채널명을 강제 변경
+                # -----------------------------------------------------------
+                if '그로스' in str(sheet_name):
+                    df_temp['채널'] = '쿠팡그로스'
+                
+                # 어느 탭에서 왔는지 기록
                 df_temp['원본시트'] = sheet_name
                 
-                # 리스트에 추가
                 all_data_frames.append(df_temp)
                 
-            except Exception as e:
-                # 특정 시트 형식이 다르면 건너뜀 (안내 메시지 없이 조용히 처리)
+            except Exception:
                 continue
 
-        # 모든 시트 데이터를 하나로 합치기
         if not all_data_frames:
             st.error("데이터를 읽을 수 없습니다. 엑셀 양식을 확인해주세요.")
             st.stop()
             
         df = pd.concat(all_data_frames, ignore_index=True)
 
-        # -------------------------------------------------------
-        # 이후 로직은 기존과 동일 (데이터 정제 및 계산)
-        # -------------------------------------------------------
-        
         # 3. 데이터 정제
         df = df.dropna(subset=['일자_raw']) 
         df['수량'] = pd.to_numeric(df['수량'], errors='coerce').fillna(0)
@@ -96,7 +87,7 @@ if uploaded_file is not None:
         current_year = datetime.datetime.now().year
         def clean_date(date_str):
             try:
-                clean_str = str(date_str).split('-')[0] # "01/19-1" -> "01/19"
+                clean_str = str(date_str).split('-')[0]
                 return pd.to_datetime(f"{current_year}/{clean_str}", format="%Y/%m/%d")
             except:
                 return None
@@ -131,52 +122,4 @@ if uploaded_file is not None:
         col4.metric("🏆 최종 순이익", f"{int(net_profit):,}원", delta=f"{net_margin:.1f}%", delta_color="normal")
         st.divider()
 
-        # 그래프 (월별)
-        if df['월'].notnull().any():
-            st.subheader("📈 통합 월별 추이 (그로스 포함)")
-            monthly_trend = df.groupby('월')[['총판매금액', '매출총이익']].sum().reset_index()
-            monthly_trend['이익률(%)'] = (monthly_trend['매출총이익'] / monthly_trend['총판매금액'] * 100).round(1)
-            
-            tab1, tab2 = st.tabs(["이익률", "매출액"])
-            with tab1:
-                fig_line = px.line(monthly_trend, x='월', y='이익률(%)', markers=True, text='이익률(%)')
-                fig_line.update_traces(textposition="bottom right", line_color='#E01E5A')
-                st.plotly_chart(fig_line, use_container_width=True)
-            with tab2:
-                fig_bar = px.bar(monthly_trend, x='월', y='총판매금액', text_auto='.2s')
-                st.plotly_chart(fig_bar, use_container_width=True)
-
-        # 채널별 분석
-        st.subheader("채널별 상세 분석")
-        col_chart1, col_chart2 = st.columns(2)
-        with col_chart1:
-            fig_pie = px.pie(df, values='총판매금액', names='채널', title='채널 점유율')
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with col_chart2:
-            channel_group = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
-            fig_bar = px.bar(channel_group, x='채널', y='매출총이익', text_auto='.2s', title='채널별 이익금액')
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-        # 엑셀 다운로드
-        st.divider()
-        st.subheader("💾 통합 데이터 다운로드")
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            save_cols = ['일자', '원본시트', '채널', '상품명', '수량', '판매단가', '원가단가', '총판매금액', '수수료금액', '매출총이익']
-            df[save_cols].to_excel(writer, index=False, sheet_name='전체통합내역')
-            if '월' in df.columns:
-                monthly_trend.to_excel(writer, index=False, sheet_name='월별요약')
-        
-        st.download_button(
-            label="📥 통합 결과 엑셀로 받기",
-            data=buffer.getvalue(),
-            file_name="AANT_통합결산결과.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        with st.expander("📄 원본 데이터 미리보기 (상위 100개)"):
-            st.dataframe(df.head(100))
-
-    except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
+        #
