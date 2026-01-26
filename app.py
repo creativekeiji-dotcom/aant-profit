@@ -19,87 +19,83 @@ DEFAULT_FEE_RATES = {
 }
 
 # ==========================================
-# 2. 강력한 데이터 로더 (여기가 핵심 수정됨!)
+# 2. 강력한 파일 판독기 (핵심 수정)
 # ==========================================
 def safe_date_parse(val, target_year=2026):
     try:
         val_str = str(val)
+        # 1. 01/19-12 패턴
         match = re.search(r'(\d{1,2})/(\d{1,2})', val_str)
         if match:
             m, d = match.groups()
             return pd.to_datetime(f"{target_year}-{m}-{d}")
+        # 2. 일반 날짜 패턴
         return pd.to_datetime(val_str)
     except:
         return None
 
-def read_file_robust(file):
+def read_file_force(file):
     """
-    어떤 파일이든(엑셀, CSV, 한글CSV) 죽지 않고 읽어내는 함수
+    확장자가 xlsx여도 내용이 csv면 csv로 읽어내는 강제 함수
     """
-    filename = file.name.lower()
-    
-    # 1. 엑셀(.xlsx) 시도
-    if filename.endswith('.xlsx') or filename.endswith('.xls'):
-        try:
-            return pd.read_excel(file, header=0, sheet_name=None)
-        except:
-            pass # 실패하면 CSV로 넘어감
+    # 1. 엑셀로 시도
+    try:
+        # header=None으로 읽어서 헤더 구조 무시하고 raw 데이터 가져옴
+        return pd.read_excel(file, header=None, sheet_name=None)
+    except:
+        pass # 실패하면 CSV 시도
 
-    # 2. CSV 시도 (UTF-8: 일반적인 경우)
+    # 2. CSV로 시도 (한국형 cp949)
     try:
         file.seek(0)
-        df = pd.read_csv(file, header=0)
+        df = pd.read_csv(file, header=None, encoding='cp949')
         return {'Sheet1': df}
     except:
         pass
-        
-    # 3. CSV 시도 (CP949: 한국 엑셀/공공기관 데이터 필수)
+
+    # 3. CSV로 시도 (일반 utf-8)
     try:
         file.seek(0)
-        df = pd.read_csv(file, header=0, encoding='cp949')
+        df = pd.read_csv(file, header=None, encoding='utf-8')
         return {'Sheet1': df}
     except:
-        pass
-        
-    # 4. CSV 시도 (EUC-KR: 옛날 한글 코드)
-    try:
-        file.seek(0)
-        df = pd.read_csv(file, header=0, encoding='euc-kr')
-        return {'Sheet1': df}
-    except:
-        return None # 진짜 읽을 수 없는 파일
+        return None # 진짜 못 읽음
 
 def load_data(files, fee_dict):
     all_dfs = []
     
     for file in files:
-        sheets = read_file_robust(file)
+        sheets = read_file_force(file)
         
         if sheets is None:
-            st.toast(f"⚠️ 파일 '{file.name}'을 읽지 못했습니다. (패스)", icon="❌")
+            st.toast(f"⚠️ '{file.name}' 파일 형식을 인식할 수 없어 건너뜁니다.", icon="🚫")
             continue
 
         for name, raw in sheets.items():
             try:
                 # 데이터가 너무 적으면 패스
-                if len(raw) < 2: continue
+                if len(raw) < 3: continue
                 
-                # [이카운트 양식 파싱]
-                # 2번째 줄부터 데이터라고 가정하고 자름
-                temp = raw.iloc[1:].copy()
+                # [전략] 헤더를 믿지 않고, 위치(인덱스)로 뜯어냄
+                # 이카운트 양식은 보통 3번째 줄(인덱스2)부터 데이터가 시작되거나
+                # 2번째 줄(인덱스1)부터 시작됨.
+                # 안전하게: '열 개수'가 충분한지 보고, 필요한 열만 가져옴
                 
-                # 컬럼 개수가 부족하면 패스 (최소 8개 열은 있어야 함)
-                if temp.shape[1] < 8: 
-                    continue
-                
-                # 필요한 열만 추출 (일자, 거래처, 품목명, 수량, 판매단가, 원가단가)
-                # 위치: A(0), B(1), D(3), E(4), F(5), H(7)
-                temp = temp.iloc[:, [0, 1, 3, 4, 5, 7]]
+                if raw.shape[1] < 8: continue
+
+                # A(0), B(1), D(3), E(4), F(5), H(7) 열 선택
+                temp = raw.iloc[:, [0, 1, 3, 4, 5, 7]].copy()
                 temp.columns = ['일자_raw', '채널', '상품명', '수량', '판매단가', '원가단가']
                 
-                # 상품명/채널 강제 문자 변환 (NaN 방지)
+                # [데이터 정제]
+                # '일자_raw'가 날짜처럼 생긴 행만 남기기 (헤더 제거 효과)
+                # 정규식으로 '숫자/숫자' 패턴이 있는 행만 유효 데이터로 인정
+                temp = temp[temp['일자_raw'].astype(str).str.contains(r'\d+/\d+', na=False)]
+                
+                if temp.empty: continue
+
+                # 상품명 문자 변환
                 temp['상품명'] = temp['상품명'].fillna("상품명없음").astype(str)
-                temp['채널'] = temp['채널'].fillna("").astype(str)
                 
                 # 그로스 체크
                 if '그로스' in str(name) or '그로스' in file.name:
@@ -114,17 +110,18 @@ def load_data(files, fee_dict):
     
     df = pd.concat(all_dfs, ignore_index=True)
     
-    # 데이터 전처리
+    # 날짜 변환
     df['일자'] = df['일자_raw'].apply(lambda x: safe_date_parse(x))
-    df = df.dropna(subset=['일자']) # 날짜 없는 행 삭제
+    df = df.dropna(subset=['일자'])
     df['월'] = df['일자'].dt.strftime('%Y-%m')
     
+    # 숫자 변환
     for c in ['수량', '판매단가', '원가단가']:
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
         
     df['총판매금액'] = df['수량'] * df['판매단가']
     df['총원가금액'] = df['수량'] * df['원가단가']
-    df['채널'] = df['채널'].str.strip()
+    df['채널'] = df['채널'].astype(str).str.strip()
     
     df['수수료율'] = df['채널'].map(fee_dict).fillna(0)
     df['수수료금액'] = df['총판매금액'] * df['수수료율']
@@ -139,40 +136,39 @@ st.title("📊 AANT CEO 경영 대시보드")
 
 with st.expander("📂 데이터 파일 관리", expanded=True):
     c1, c2, c3 = st.columns(3)
-    up_files = c1.file_uploader("1️⃣ 판매 파일 (필수)", accept_multiple_files=True)
+    up_files = c1.file_uploader("1️⃣ 판매 파일 (엑셀/CSV)", accept_multiple_files=True)
     cost_file = c2.file_uploader("2️⃣ 고정비 파일 (선택)")
-    fee_file = c3.file_uploader("3️⃣ 수수료율 파일 (선택)")
+    fee_file = c3.file_uploader("3️⃣ 수수료 파일 (선택)")
 
-# 수수료율 로딩
 current_fee_rates = DEFAULT_FEE_RATES.copy()
 if fee_file:
     try:
-        sheets = read_file_robust(fee_file)
+        sheets = read_file_force(fee_file)
         if sheets:
-            # 첫 번째 시트 사용
             fdf = list(sheets.values())[0]
             new_rates = dict(zip(fdf.iloc[:, 0], fdf.iloc[:, 1]))
             current_fee_rates.update(new_rates)
     except: pass
 
 if up_files:
-    # 데이터 로드 시도
     df = load_data(up_files, current_fee_rates)
     
     if df is not None and not df.empty:
-        # ------------------------------------------------
-        # [데이터 정상] 분석 화면 출력
-        # ------------------------------------------------
+        # KPI
         sales = df['총판매금액'].sum()
         gross = df['매출총이익'].sum()
         
         fixed_cost = 0
         if cost_file:
             try:
-                sheets = read_file_robust(cost_file)
+                sheets = read_file_force(cost_file)
                 if sheets:
                     cdf = list(sheets.values())[0]
-                    fixed_cost = cdf.select_dtypes(include='number').sum().sum()
+                    # 숫자 열만 찾아서 합계
+                    fixed_cost = cdf.select_dtypes(include=['number']).sum().sum()
+                    # 만약 숫자가 안 잡히면 명시적 컬럼 합계 시도
+                    if fixed_cost == 0 and '광고비' in cdf.columns: 
+                        fixed_cost = cdf['광고비'].sum() + cdf.get('택배비',0).sum() + cdf.get('운영비',0).sum()
             except: pass
 
         net = gross - fixed_cost
@@ -189,7 +185,6 @@ if up_files:
         tab1, tab2, tab3 = st.tabs(["📊 분석 리포트", "📋 수수료율", "📥 파일 다운로드"])
         
         with tab1:
-            # 1. 채널 분석
             st.subheader("1️⃣ 채널별 성과")
             ch_df = df.groupby('채널')[['총판매금액', '매출총이익']].sum().reset_index()
             ch_df['이익률'] = (ch_df['매출총이익'] / ch_df['총판매금액'] * 100).fillna(0)
@@ -204,14 +199,11 @@ if up_files:
                 fig.add_trace(go.Scatter(x=ch_df['채널'], y=ch_df['이익률'], name="이익률(%)", line=dict(color='red')), secondary_y=True)
                 st.plotly_chart(fig, use_container_width=True)
             
-            # 2. 랭킹 (문제 해결 구간)
             st.divider()
             st.subheader("2️⃣ 상품별 판매 랭킹 (Top 10)")
-            
-            # 상품명 그룹핑
             pr_df = df.groupby('상품명')[['수량', '총판매금액', '매출총이익']].sum().reset_index()
             
-            # 혹시 상품명이 없거나 빈값인 경우 제거
+            # 상품명없음 제거
             pr_df = pr_df[pr_df['상품명'] != "상품명없음"]
             
             if not pr_df.empty:
@@ -219,7 +211,7 @@ if up_files:
                 top10.index = range(1, len(top10)+1)
                 st.dataframe(top10.style.format("{:,.0f}"), use_container_width=True)
             else:
-                st.warning("상품 데이터가 없습니다. 원본 데이터의 [품목명] 컬럼을 확인해주세요.")
+                st.warning("유효한 상품 데이터를 찾지 못했습니다.")
 
         with tab2:
             st.subheader("📋 적용 수수료율")
@@ -240,10 +232,7 @@ if up_files:
             st.download_button("📥 CEO 보고서 엑셀 받기", buffer.getvalue(), f"AANT_Report_{today_str}.xlsx")
 
     else:
-        # ------------------------------------------------
-        # [데이터 읽기 실패 시] 진단 메시지 출력
-        # ------------------------------------------------
         st.error("❌ 데이터를 읽을 수 없습니다.")
-        st.info("💡 힌트: 파일이 CSV형식일 경우, '한글 인코딩(cp949)' 문제일 수 있는데 이번 코드에서 해결했습니다. 그래도 안 된다면 파일 내용을 캡처해서 보여주세요.")
+        st.info("💡 CSV 파일 인코딩 문제일 가능성이 높아, '강제 읽기 모드(cp949)'를 적용했습니다. 그래도 안 된다면 파일 내용을 캡처해서 보여주세요.")
 else:
     st.info("파일을 업로드해주세요.")
