@@ -4,7 +4,7 @@ import plotly.express as px
 import io
 
 st.set_page_config(page_title="AANT 월간 결산", layout="wide")
-st.title("📊 AANT(안트) 판매 분석 대시보드")
+st.title("📊 AANT(안트) 경영 분석 대시보드")
 
 # --- 1. 사이드바: 고정비 설정 ---
 with st.sidebar:
