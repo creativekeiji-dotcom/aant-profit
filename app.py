@@ -19,7 +19,7 @@ FEE_RATES = {
     "사업자거래": 0.0
 }
 
-# 이카운트 엑셀 컬럼 매핑
+# 이카운트 엑셀 컬럼 매핑 (이사님 엑셀 양식에 맞춤)
 COLUMN_MAP = {
     '일자': '일자',       
     '채널': '거래처명',
@@ -60,7 +60,7 @@ with st.sidebar:
                 file_fixed_cost = f_df['금액'].sum()
                 st.success(f"파일 반영: {file_fixed_cost:,.0f}원")
             else:
-                st.error("'금액' 컬럼이 없습니다.")
+                st.error("'금액' 컬럼이 없습니다. 양식을 확인해주세요.")
         except Exception as e:
             st.error(f"파일 읽기 오류: {e}")
 
@@ -89,9 +89,9 @@ if uploaded_file is not None:
         df.rename(columns=rename_dict, inplace=True)
 
         if '수량' not in df.columns or '판매단가' not in df.columns:
-            st.error("필수 컬럼(수량, 단가)을 찾을 수 없습니다.")
+            st.error("필수 컬럼(수량, 단가)을 찾을 수 없습니다. 이카운트 양식을 확인해주세요.")
         else:
-            # 기본 계산
+            # 기본 계산 로직
             if '일자' in df.columns:
                 df['일자'] = pd.to_datetime(df['일자'])
                 df['월'] = df['일자'].dt.strftime('%Y-%m')
@@ -106,24 +106,24 @@ if uploaded_file is not None:
             
             df['매출총이익'] = df['총판매금액'] - df['총원가금액'] - df['수수료금액']
             
-            # 합계 데이터
+            # 합계 데이터 계산
             total_sales = df['총판매금액'].sum()
             gross_profit = df['매출총이익'].sum()
-            net_profit = gross_profit - total_fixed_cost # 최종 순이익 계산
+            net_profit = gross_profit - total_fixed_cost # 고정비 반영
             
             gross_margin = (gross_profit / total_sales * 100) if total_sales > 0 else 0
             net_margin = (net_profit / total_sales * 100) if total_sales > 0 else 0
 
-            # 결과 지표 출력
+            # 결과 지표 출력 (대시보드 상단 카드)
             st.divider()
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("💰 총 매출", f"{int(total_sales):,}원")
-            c2.metric("📦 상품 마진", f"{int(gross_profit):,}원", f"{gross_margin:.1f}%")
-            c3.metric("💸 고정비(파일포함)", f"-{total_fixed_cost:,.0f}원")
-            c4.metric("🏆 최종 순이익", f"{int(net_profit):,}원", f"{net_margin:.1f}%")
+            c2.metric("📦 상품 마진 (GP)", f"{int(gross_profit):,}원", f"{gross_margin:.1f}%")
+            c3.metric("💸 고정비 (파일+수동)", f"-{total_fixed_cost:,.0f}원")
+            c4.metric("🏆 최종 순이익 (NP)", f"{int(net_profit):,}원", f"{net_margin:.1f}%")
             st.divider()
 
-            # 그래프 영역
+            # 시각화 영역
             tab1, tab2 = st.tabs(["채널별 분석", "월별 추세"])
             with tab1:
                 col_a, col_b = st.columns(2)
@@ -137,14 +137,14 @@ if uploaded_file is not None:
             with tab2:
                 if '월' in df.columns:
                     monthly = df.groupby('월')[['총판매금액', '매출총이익']].sum().reset_index()
-                    fig3 = px.line(monthly, x='월', y='총판매금액', markers=True, title='월별 매출 추이')
+                    fig3 = px.line(monthly, x='월', y='총판매금액', markers=True, title='월별 매출액 추이')
                     st.plotly_chart(fig3, use_container_width=True)
 
-            # 데이터 다운로드
+            # 결과 다운로드 버튼
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='분석데이터')
-            st.download_button("📥 분석 결과 다운로드", buffer.getvalue(), "AANT_결산.xlsx")
+                df.to_excel(writer, index=False, sheet_name='상세데이터')
+            st.download_button("📥 분석 결과 엑셀 다운로드", buffer.getvalue(), "AANT_결산_리포트.xlsx")
 
     except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
+        st.error(f"데이터 처리 중 오류가 발생했습니다: {e}")
