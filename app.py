@@ -4,7 +4,7 @@ import plotly.express as px
 import io
 
 st.set_page_config(page_title="AANT 월간 결산", layout="wide")
-st.title("📊 AANT(안트) 경영 분석 대시보드")
+st.title("📊 AANT(안트) 판매 분석 대시보드")
 
 # --- 1. 사이드바: 고정비 설정 ---
 with st.sidebar:
@@ -32,32 +32,28 @@ with st.sidebar:
     total_fixed_cost = file_fixed_sum + st.number_input("기타 직접입력", value=0)
     st.metric("총 고정비 합계", f"{total_fixed_cost:,.0f} 원")
 
-# --- 2. 메인: 판매 데이터 처리 (병합 셀 완벽 대응) ---
+# --- 2. 메인: 판매 데이터 처리 ---
 main_file = st.file_uploader("이카운트 매출 엑셀을 올려주세요", type=['xlsx', 'xls', 'csv'])
 
 if main_file is not None:
     try:
         raw = pd.read_excel(main_file) if not main_file.name.endswith('.csv') else pd.read_csv(main_file)
         
-        # '거래처명'이 있는 행 찾기
         h_idx = -1
         for i in range(len(raw)):
             if '거래처명' in [str(v) for v in raw.iloc[i].values]:
                 h_idx = i; break
         
         if h_idx != -1:
-            # 1층 제목과 2층 제목 합치기 (판매 + 수량 = 판매_수량)
             h1 = raw.iloc[h_idx].values.tolist()
             h2 = raw.iloc[h_idx + 1].values.tolist()
             
-            # 1층 제목 빈칸 채우기 (Forward Fill)
             h1_filled = []
             curr = ""
             for v in h1:
                 if pd.notna(v) and str(v).strip() != "": curr = str(v).strip()
                 h1_filled.append(curr)
             
-            # 컬럼명 합체
             new_cols = []
             for p1, p2 in zip(h1_filled, h2):
                 p1, p2 = str(p1).strip(), str(p2).strip() if pd.notna(p2) else ""
@@ -66,7 +62,6 @@ if main_file is not None:
             df = raw.iloc[h_idx + 2:].copy()
             df.columns = new_cols
             
-            # 데이터 매핑
             col_map = {}
             for c in df.columns:
                 if '거래처명' in c: col_map[c] = '채널'
@@ -78,25 +73,27 @@ if main_file is not None:
             
             df.rename(columns=col_map, inplace=True)
             
-            # 숫자 변환 및 계산
             for col in ['수량', '매출액', '매입원가']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             
             if '매출액' in df.columns:
                 ts = df['매출액'].sum()
-                gp = ts - df['매입원가'].sum() - (ts * 0.1) # 수수료 10%
+                gp = ts - df['매입원가'].sum() - (ts * 0.1) # 수수료 10% 가정
                 np = gp - total_fixed_cost
+                
+                # 순이익률 계산
+                net_margin = (np / ts * 100) if ts > 0 else 0
                 
                 st.divider()
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("💰 총 매출", f"{int(ts):,}원")
                 c2.metric("📦 상품 마진", f"{int(gp):,}원")
                 c3.metric("💸 총 고정비", f"-{int(total_fixed_cost):,}원")
-                c4.metric("🏆 최종 순이익", f"{int(np):,}원")
+                # 이 부분에 이익률(%)이 추가되었습니다
+                c4.metric("🏆 최종 순이익", f"{int(np):,}원", delta=f"{net_margin:.1f}%", delta_color="normal")
                 st.divider()
                 
-                # 그래프 및 데이터
                 st.plotly_chart(px.pie(df, values='매출액', names='채널', title='채널별 매출 비중'))
                 st.dataframe(df[['일자', '채널', '상품명', '수량', '매출액']])
             else: st.error("파일에서 '판매_금액' 항목을 찾을 수 없습니다.")
