@@ -113,7 +113,7 @@ if main_file is not None:
                 font_path = "NanumGothic.ttf"
                 
                 if os.path.exists(font_path):
-                    pdf.add_font('Nanum', '', font_path, unicode=True)
+                    pdf.add_font('Nanum', '', font_path)
                     pdf.set_font('Nanum', size=18)
                     header_text = "AANT 월간 경영 분석 리포트"
                 else:
@@ -148,3 +148,4 @@ if main_file is not None:
                 st.download_button(label="📥 PDF 리포트 다운로드", data=bytes(pdf_output), file_name="AANT_Report.pdf", mime="application/pdf")
 
     except Exception as e: st.error(f"에러 발생: {e}")
+
