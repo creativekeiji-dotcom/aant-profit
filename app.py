@@ -6,7 +6,7 @@ from fpdf import FPDF
 import tempfile
 import os
 
-# --- 설정: 수수료율 ---
+# --- 설정: 채널별 수수료율 ---
 FEE_RATES = {
     "쿠팡": 0.1188, "쿠팡그로스": 0.1188, "네이버": 0.06,
     "옥션": 0.143, "지마켓": 0.143, "11번가": 0.143,
@@ -14,7 +14,7 @@ FEE_RATES = {
 }
 
 st.set_page_config(page_title="AANT 월간 경영리포트", layout="wide")
-st.title("📊 AANT(안트) 판매 분석 및 PDF 리포트")
+st.title("📊 AANT(안트) 경영 분석 및 PDF 리포트")
 
 # --- 1. 사이드바: 고정비 설정 ---
 with st.sidebar:
@@ -87,7 +87,7 @@ if main_file is not None:
             np = gp - total_fixed_cost
             nm = (np / ts * 100) if ts > 0 else 0
 
-            # --- 결과 요약 ---
+            # --- 결과 화면 출력 ---
             st.divider()
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("💰 실 매출액", f"{int(ts):,}원")
@@ -96,44 +96,55 @@ if main_file is not None:
             c4.metric("🏆 최종 순이익", f"{int(np):,}원", delta=f"{nm:.1f}%")
             st.divider()
 
-            # --- TOP 10 상품 추출 (마진율 추가) ---
             st.subheader("🔝 최고 판매 상품 TOP 10 (매출 기준)")
             top10 = df.groupby('상품명')[['매출액', '이익액', '수량']].sum().sort_values(by='매출액', ascending=False).head(10)
             top10['마진율(%)'] = (top10['이익액'] / top10['매출액'] * 100).round(1)
             st.table(top10.style.format("{:,.1f}" if '마진율' in top10.columns else "{:,.0f}"))
 
-            # --- 파이 차트 ---
             fig_pie = px.pie(df, values='매출액', names='채널', title='채널별 매출 비중')
             st.plotly_chart(fig_pie, use_container_width=True)
 
-            # --- PDF 생성 섹션 ---
+            # --- PDF 생성 및 다운로드 섹션 ---
             if st.button("📄 경영 분석 PDF 리포트 생성"):
                 pdf = FPDF()
                 pdf.add_page()
                 
-                # 폰트 설정 (이사님이 NanumGothic.ttf 파일을 업로드했다는 가정하에 한글 설정)
+                # 폰트 경로 (업로드하신 파일명과 일치해야 함)
                 font_path = "NanumGothic.ttf"
+                
                 if os.path.exists(font_path):
                     pdf.add_font('Nanum', '', font_path, unicode=True)
-                    pdf.set_font('Nanum', size=16)
+                    pdf.set_font('Nanum', size=18)
+                    header_text = "AANT 월간 경영 분석 리포트"
                 else:
-                    pdf.set_font("Arial", 'B', 16) # 폰트 없을시 기본
+                    pdf.set_font("Arial", 'B', 16)
+                    header_text = "AANT Monthly Business Report"
                 
-                pdf.cell(200, 10, txt="AANT Monthly Business Report", ln=True, align='C')
-                pdf.ln(10)
-                pdf.set_font('Arial', size=12) if not os.path.exists(font_path) else pdf.set_font('Nanum', size=12)
-                
-                pdf.cell(200, 10, txt=f"Total Sales: {int(ts):,} KRW", ln=True)
-                pdf.cell(200, 10, txt=f"Total Fixed Cost: {int(total_fixed_cost):,} KRW", ln=True)
-                pdf.cell(200, 10, txt=f"Net Profit: {int(np):,} KRW (Margin: {nm:.1f}%)", ln=True)
+                pdf.cell(200, 10, txt=header_text, ln=True, align='C')
                 pdf.ln(10)
                 
-                # 차트 이미지 삽입 (kaleido 필요)
+                if os.path.exists(font_path): pdf.set_font('Nanum', size=12)
+                else: pdf.set_font("Arial", size=12)
+                
+                pdf.cell(200, 10, txt=f"1. 총 매출액: {int(ts):,} 원", ln=True)
+                pdf.cell(200, 10, txt=f"2. 상품 마진(수수료 차감 후): {int(gp):,} 원", ln=True)
+                pdf.cell(200, 10, txt=f"3. 총 고정비 지출: {int(total_fixed_cost):,} 원", ln=True)
+                pdf.cell(200, 10, txt=f"4. 최종 순이익: {int(np):,} 원 (이익률: {nm:.1f}%)", ln=True)
+                pdf.ln(10)
+                
+                pdf.cell(200, 10, txt="[ 채널별 매출 비중 ]", ln=True)
+                # 차트 이미지 삽입
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
                     fig_pie.write_image(tmpfile.name)
-                    pdf.image(tmpfile.name, x=10, y=None, w=100)
+                    pdf.image(tmpfile.name, x=10, y=None, w=120)
                 
-                pdf_output = pdf.output(dest='S').encode('latin-1', 'replace')
-                st.download_button(label="📥 PDF 다운로드", data=pdf_output, file_name="AANT_Report.pdf", mime="application/pdf")
+                pdf.ln(10)
+                pdf.cell(200, 10, txt="[ TOP 10 판매 상품 요약 ]", ln=True)
+                for i, (name, row) in enumerate(top10.iterrows()):
+                    pdf.cell(200, 8, txt=f"{i+1}. {name[:30]}: {int(row['매출액']):,}원 (마진 {row['마진율(%)']}%)", ln=True)
+                
+                # PDF 출력 (한글 인코딩 대응)
+                pdf_output = pdf.output(dest='S')
+                st.download_button(label="📥 PDF 리포트 다운로드", data=bytes(pdf_output), file_name="AANT_Report.pdf", mime="application/pdf")
 
     except Exception as e: st.error(f"에러 발생: {e}")
