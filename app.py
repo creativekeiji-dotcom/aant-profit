@@ -32,7 +32,7 @@ with st.sidebar:
     total_fixed_cost = file_fixed_sum + st.number_input("기타 직접입력", value=0)
     st.metric("총 고정비 합계", f"{total_fixed_cost:,.0f} 원")
 
-# --- 2. 메인: 판매 데이터 처리 ---
+# --- 2. 메인: 판매 데이터 처리 (중복 합계 필터링 추가) ---
 main_file = st.file_uploader("이카운트 매출 엑셀을 올려주세요", type=['xlsx', 'xls', 'csv'])
 
 if main_file is not None:
@@ -47,7 +47,6 @@ if main_file is not None:
         if h_idx != -1:
             h1 = raw.iloc[h_idx].values.tolist()
             h2 = raw.iloc[h_idx + 1].values.tolist()
-            
             h1_filled = []
             curr = ""
             for v in h1:
@@ -61,6 +60,10 @@ if main_file is not None:
             
             df = raw.iloc[h_idx + 2:].copy()
             df.columns = new_cols
+            
+            # [수정] '계'나 '합계'가 들어간 중복 행 제거 (범인 검거!)
+            df = df[~df.iloc[:, 0].astype(str).str.contains('계|합계', na=False)]
+            df = df[~df.iloc[:, 1].astype(str).str.contains('계|합계', na=False)]
             
             col_map = {}
             for c in df.columns:
@@ -79,7 +82,9 @@ if main_file is not None:
             
             if '매출액' in df.columns:
                 ts = df['매출액'].sum()
-                gp = ts - df['매입원가'].sum() - (ts * 0.1) # 수수료 10% 가정
+                # 매입원가가 0이면 이익을 0으로 잡지 않도록 수정
+                cost_sum = df['매입원가'].sum()
+                gp = ts - cost_sum - (ts * 0.1) # 수수료 10% 가정
                 np = gp - total_fixed_cost
                 
                 # 순이익률 계산
@@ -87,10 +92,9 @@ if main_file is not None:
                 
                 st.divider()
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("💰 총 매출", f"{int(ts):,}원")
+                c1.metric("💰 실 매출액", f"{int(ts):,}원")
                 c2.metric("📦 상품 마진", f"{int(gp):,}원")
                 c3.metric("💸 총 고정비", f"-{int(total_fixed_cost):,}원")
-                # 이 부분에 이익률(%)이 추가되었습니다
                 c4.metric("🏆 최종 순이익", f"{int(np):,}원", delta=f"{net_margin:.1f}%", delta_color="normal")
                 st.divider()
                 
