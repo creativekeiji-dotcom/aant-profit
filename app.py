@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import io
-from fpdf import FPDF # PDF 생성을 위해 추가
+from fpdf import FPDF
+import tempfile
+import os
 
 # --- 설정: 수수료율 ---
 FEE_RATES = {
@@ -14,7 +16,7 @@ FEE_RATES = {
 st.set_page_config(page_title="AANT 월간 경영리포트", layout="wide")
 st.title("📊 AANT(안트) 판매 분석 및 PDF 리포트")
 
-# --- 1. 사이드바: 고정비 설정 (기존 유지) ---
+# --- 1. 사이드바: 고정비 설정 ---
 with st.sidebar:
     st.header("💸 월간 고정비 설정")
     fixed_file = st.file_uploader("고정비 파일 업로드", type=['csv', 'xlsx'])
@@ -22,6 +24,10 @@ with st.sidebar:
     if fixed_file is not None:
         try:
             f_df = pd.read_csv(fixed_file, encoding='utf-8-sig') if fixed_file.name.endswith('.csv') else pd.read_excel(fixed_file)
+            if '금액' not in f_df.columns:
+                for i in range(len(f_df)):
+                    if '금액' in f_df.iloc[i].values:
+                        f_df.columns = f_df.iloc[i]; f_df = f_df.iloc[i+1:].reset_index(drop=True); break
             if '금액' in f_df.columns:
                 f_df['amt'] = pd.to_numeric(f_df['금액'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
                 total = 0
@@ -41,7 +47,6 @@ main_file = st.file_uploader("이카운트 매출 엑셀 업로드", type=['xlsx
 if main_file is not None:
     try:
         raw = pd.read_excel(main_file) if not main_file.name.endswith('.csv') else pd.read_csv(main_file)
-        
         h_idx = -1
         for i in range(len(raw)):
             if '거래처명' in [str(v) for v in raw.iloc[i].values]:
@@ -63,8 +68,6 @@ if main_file is not None:
             
             df = raw.iloc[h_idx + 2:].copy()
             df.columns = new_cols
-            
-            # 중복 행 제거
             df = df[~df.iloc[:, 0].astype(str).str.contains('계|합계', na=False)]
             
             col_map = {'거래처명':'채널', '품목명':'상품명', '판매_수량':'수량', '판매_금액':'매출액', '원가_금액':'매입원가'}
@@ -76,7 +79,6 @@ if main_file is not None:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
             
-            # 이익 계산 (수수료 반영)
             df['채널'] = df['채널'].astype(str).str.strip()
             df['수수료율'] = df['채널'].apply(lambda x: next((v for k, v in FEE_RATES.items() if k in x), 0.1))
             df['이익액'] = df['매출액'] - df['매입원가'] - (df['매출액'] * df['수수료율'])
@@ -94,31 +96,44 @@ if main_file is not None:
             c4.metric("🏆 최종 순이익", f"{int(np):,}원", delta=f"{nm:.1f}%")
             st.divider()
 
-            # --- TOP 10 상품 추출 ---
+            # --- TOP 10 상품 추출 (마진율 추가) ---
             st.subheader("🔝 최고 판매 상품 TOP 10 (매출 기준)")
             top10 = df.groupby('상품명')[['매출액', '이익액', '수량']].sum().sort_values(by='매출액', ascending=False).head(10)
-            st.table(top10.style.format("{:,.0f}"))
+            top10['마진율(%)'] = (top10['이익액'] / top10['매출액'] * 100).round(1)
+            st.table(top10.style.format("{:,.1f}" if '마진율' in top10.columns else "{:,.0f}"))
 
             # --- 파이 차트 ---
-            st.plotly_chart(px.pie(df, values='매출액', names='채널', title='채널별 매출 비중'))
+            fig_pie = px.pie(df, values='매출액', names='채널', title='채널별 매출 비중')
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-            # --- PDF 생성 및 다운로드 ---
+            # --- PDF 생성 섹션 ---
             if st.button("📄 경영 분석 PDF 리포트 생성"):
                 pdf = FPDF()
                 pdf.add_page()
-                # 한글 폰트 문제로 영문 제목/데이터 위주 구성 (한글 폰트 경로 설정 시 한글 가능)
-                pdf.set_font("Arial", 'B', 16)
+                
+                # 폰트 설정 (이사님이 NanumGothic.ttf 파일을 업로드했다는 가정하에 한글 설정)
+                font_path = "NanumGothic.ttf"
+                if os.path.exists(font_path):
+                    pdf.add_font('Nanum', '', font_path, unicode=True)
+                    pdf.set_font('Nanum', size=16)
+                else:
+                    pdf.set_font("Arial", 'B', 16) # 폰트 없을시 기본
+                
                 pdf.cell(200, 10, txt="AANT Monthly Business Report", ln=True, align='C')
-                pdf.set_font("Arial", size=12)
                 pdf.ln(10)
+                pdf.set_font('Arial', size=12) if not os.path.exists(font_path) else pdf.set_font('Nanum', size=12)
+                
                 pdf.cell(200, 10, txt=f"Total Sales: {int(ts):,} KRW", ln=True)
                 pdf.cell(200, 10, txt=f"Total Fixed Cost: {int(total_fixed_cost):,} KRW", ln=True)
                 pdf.cell(200, 10, txt=f"Net Profit: {int(np):,} KRW (Margin: {nm:.1f}%)", ln=True)
                 pdf.ln(10)
-                pdf.cell(200, 10, txt="Top 10 Selling Products (Summary)", ln=True)
                 
-                # 리포트 파일로 내보내기
-                pdf_output = pdf.output(dest='S').encode('latin-1')
+                # 차트 이미지 삽입 (kaleido 필요)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                    fig_pie.write_image(tmpfile.name)
+                    pdf.image(tmpfile.name, x=10, y=None, w=100)
+                
+                pdf_output = pdf.output(dest='S').encode('latin-1', 'replace')
                 st.download_button(label="📥 PDF 다운로드", data=pdf_output, file_name="AANT_Report.pdf", mime="application/pdf")
 
     except Exception as e: st.error(f"에러 발생: {e}")
