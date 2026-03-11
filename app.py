@@ -254,7 +254,7 @@ if main_file is not None:
                     )
                     pdf.cell(200, 8, txt=line_text, ln=True)
 
-                pdf_output = pdf.output(dest="S").encode("latin-1")
+                pdf_output = bytes(pdf.output(dest="S"))
 
                 st.download_button(
                     label="📥 PDF 리포트 다운로드",
@@ -265,3 +265,4 @@ if main_file is not None:
 
     except Exception as e:
         st.error(f"에러 발생: {e}")
+
