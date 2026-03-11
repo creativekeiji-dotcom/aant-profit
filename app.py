@@ -137,15 +137,19 @@ if main_file is not None:
                 
                 # [핵심 수정] PDF용 이미지를 만들 때만 배경을 하얀색으로 강제 고정
                 try:
-                  with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                      fig_pdf = fig_pie.update_layout(
-                      paper_bgcolor='white',
-                      plot_bgcolor='white',
-                      font=dict(color='black'),
-                      template='plotly_white'
-                 )
-                 fig_pdf.write_image(tmpfile.name)
-                 pdf.image(tmpfile.name, x=10, y=None, w=120)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                fig_pdf = fig_pie.update_layout(
+                  paper_bgcolor='white',
+                plot_bgcolor='white',
+                font=dict(color='black'),
+                template='plotly_white'
+        )
+
+        fig_pdf.write_image(tmpfile.name)
+        pdf.image(tmpfile.name, x=10, y=None, w=120)
+
+except Exception as img_err:
+    st.warning(f"차트 이미지를 PDF에 넣는 중 오류: {img_err}")
 
 except Exception as img_err:
     st.warning(f"차트 이미지를 PDF에 넣는 중 오류: {img_err}")
@@ -166,6 +170,7 @@ st.download_button(
 )
 
     except Exception as e: st.error(f"에러 발생: {e}")
+
 
 
 
