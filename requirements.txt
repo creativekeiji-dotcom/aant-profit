@@ -3,6 +3,6 @@ pandas
 plotly
 openpyxl
 fpdf2
-kaleido
+
 
 
