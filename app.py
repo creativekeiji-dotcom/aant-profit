@@ -136,16 +136,18 @@ if main_file is not None:
                 pdf.cell(200, 10, txt="[ 채널별 매출 비중 ]", ln=True)
                 
                 # [핵심 수정] PDF용 이미지를 만들 때만 배경을 하얀색으로 강제 고정
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                    # PDF용으로 차트 스타일 일시 변경
-                    fig_pdf = fig_pie.update_layout(
-                        paper_bgcolor='white', 
-                        plot_bgcolor='white',
-                        font=dict(color='black'),
-                        template='plotly_white'
-                    )
-                    fig_pdf.write_image(tmpfile.name)
-                    pdf.image(tmpfile.name, x=10, y=None, w=120)
+                try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+        fig_pdf = fig_pie.update_layout(
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+            font=dict(color='black'),
+            template='plotly_white'
+        )
+        fig_pdf.write_image(tmpfile.name)
+        pdf.image(tmpfile.name, x=10, y=None, w=120)
+except Exception as img_err:
+    st.warning(f"차트 이미지를 PDF에 넣는 중 오류: {img_err}")
                 
                 pdf.ln(10)
                 pdf.cell(200, 10, txt="[ TOP 10 판매 상품 요약 ]", ln=True)
@@ -163,5 +165,6 @@ st.download_button(
 )
 
     except Exception as e: st.error(f"에러 발생: {e}")
+
 
 
