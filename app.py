@@ -154,8 +154,14 @@ if main_file is not None:
                     short_name = name[:25] + "..." if len(name) > 25 else name
                     pdf.cell(200, 8, txt=f"{i+1}. {short_name}: {int(row['매출액']):,}원 (마진 {row['마진율(%)']}%)", ln=True)
                 
-                pdf_output = pdf.output(dest='S')
-                st.download_button(label="📥 PDF 리포트 다운로드", data=bytes(pdf_output), file_name="AANT_Report.pdf", mime="application/pdf")
+                pdf_output = pdf.output(dest='S').encode('latin-1')
+st.download_button(
+    label="📥 PDF 리포트 다운로드",
+    data=pdf_output,
+    file_name="AANT_Report.pdf",
+    mime="application/pdf"
+)
 
     except Exception as e: st.error(f"에러 발생: {e}")
+
 
