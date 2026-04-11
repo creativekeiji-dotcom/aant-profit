@@ -9,11 +9,8 @@ FEE_RATES = {
     "쿠팡": 0.1188,
     "쿠팡그로스": 0.1188,
     "네이버": 0.06,
-
-    # 🔥 여기 추가
     "네이버파이낸셜": 0.06,
     "안트": 0.0,
-
     "옥션": 0.143,
     "지마켓": 0.143,
     "11번가": 0.143,
@@ -23,8 +20,8 @@ FEE_RATES = {
     "사업자거래": 0.0,
 }
 
-st.set_page_config(page_title="AANT 월간 경영리포트", layout="wide")
-st.title("📊 AANT(안트) 경영 분석 및 PDF 리포트")
+st.set_page_config(page_title="온라인 월간 리포트", layout="wide")
+st.title("📊 온라인 월간 리포트")
 
 # --- 1. 사이드바: 고정비 설정 ---
 with st.sidebar:
@@ -41,21 +38,22 @@ with st.sidebar:
 
             if "금액" not in f_df.columns:
                 for i in range(len(f_df)):
-                    if "금액" in f_df.iloc[i].values:
+                    if "금액" in [str(v) for v in f_df.iloc[i].values]:
                         f_df.columns = f_df.iloc[i]
                         f_df = f_df.iloc[i + 1 :].reset_index(drop=True)
                         break
 
             if "금액" in f_df.columns:
                 f_df["amt"] = pd.to_numeric(
-                    f_df["금액"].astype(str).str.replace(",", ""),
+                    f_df["금액"].astype(str).str.replace(",", "", regex=False),
                     errors="coerce"
                 ).fillna(0)
 
                 total = 0
                 for _, row in f_df.iterrows():
                     v = abs(row["amt"])
-                    if "보상" in str(row.values):
+                    row_text = " ".join([str(x) for x in row.values])
+                    if "보상" in row_text:
                         total -= v
                     else:
                         total += v
@@ -64,8 +62,8 @@ with st.sidebar:
                 st.success(f"고정비 반영: {file_fixed_sum:,.0f}원")
             else:
                 st.error("고정비 파일에 '금액' 컬럼을 찾지 못했습니다.")
-        except Exception:
-            st.error("고정비 파일 확인")
+        except Exception as e:
+            st.error(f"고정비 파일 확인 중 오류: {e}")
 
     total_fixed_cost = file_fixed_sum + st.number_input("기타 직접입력", value=0)
 
@@ -76,9 +74,9 @@ if main_file is not None:
     try:
         # 원본 파일 읽기
         if main_file.name.endswith(".csv"):
-            raw = pd.read_csv(main_file)
+            raw = pd.read_csv(main_file, header=None)
         else:
-            raw = pd.read_excel(main_file)
+            raw = pd.read_excel(main_file, header=None)
 
         # 헤더 행 찾기
         h_idx = -1
@@ -103,7 +101,7 @@ if main_file is not None:
 
             new_cols = []
             for p1, p2 in zip(h1_filled, h2):
-                p1 = str(p1).strip()
+                p1 = str(p1).strip() if pd.notna(p1) else ""
                 p2 = str(p2).strip() if pd.notna(p2) else ""
 
                 if p1 and p2:
@@ -131,7 +129,7 @@ if main_file is not None:
 
             for c in df.columns:
                 for k, v in col_map.items():
-                    if k in c:
+                    if k in str(c):
                         df.rename(columns={c: v}, inplace=True)
 
             # 필수 컬럼 체크
@@ -141,17 +139,20 @@ if main_file is not None:
                     st.error(f"필수 컬럼이 없습니다: {col}")
                     st.stop()
 
+            # 문자열/빈값 방어
+            df["채널"] = df["채널"].fillna("").astype(str).str.strip()
+            df["상품명"] = df["상품명"].fillna("").astype(str).str.strip()
+
             # 숫자형 변환
             for col in ["수량", "매출액", "매입원가"]:
                 df[col] = pd.to_numeric(
-                    df[col].astype(str).str.replace(",", ""),
+                    df[col].astype(str).str.replace(",", "", regex=False),
                     errors="coerce"
                 ).fillna(0)
 
             # 계산
-            df["채널"] = df["채널"].astype(str).str.strip()
             df["수수료율"] = df["채널"].apply(
-                lambda x: next((v for k, v in FEE_RATES.items() if k in x), 0.1)
+                lambda x: next((v for k, v in FEE_RATES.items() if k in str(x)), 0.1)
             )
             df["이익액"] = df["매출액"] - df["매입원가"] - (df["매출액"] * df["수수료율"])
 
@@ -167,7 +168,9 @@ if main_file is not None:
                 .sort_values(by="매출액", ascending=False)
                 .head(10)
             )
-            top10["마진율(%)"] = (top10["이익액"] / top10["매출액"] * 100).round(1)
+            top10["마진율(%)"] = (
+                (top10["이익액"] / top10["매출액"].replace(0, pd.NA)) * 100
+            ).fillna(0).round(1)
 
             # --- 채널 요약표 ---
             channel_summary = (
@@ -177,8 +180,8 @@ if main_file is not None:
                 .reset_index()
             )
             channel_summary["마진율(%)"] = (
-                channel_summary["이익액"] / channel_summary["매출액"] * 100
-            ).round(1)
+                (channel_summary["이익액"] / channel_summary["매출액"].replace(0, pd.NA)) * 100
+            ).fillna(0).round(1)
 
             # --- 대시보드 화면 ---
             st.divider()
@@ -238,10 +241,10 @@ if main_file is not None:
                 if use_korean_font:
                     pdf.add_font("Nanum", "", font_path)
                     pdf.set_font("Nanum", size=18)
-                    header_text = "AANT 월간 경영 분석 리포트"
+                    header_text = "온라인 월간 리포트"
                 else:
                     pdf.set_font("Arial", "B", 16)
-                    header_text = "AANT Monthly Business Report"
+                    header_text = "Online Monthly Report"
 
                 pdf.cell(190, 10, txt=header_text, ln=True, align="C")
                 pdf.ln(8)
@@ -316,7 +319,7 @@ if main_file is not None:
                 st.download_button(
                     label="📥 PDF 리포트 다운로드",
                     data=pdf_output,
-                    file_name="AANT_Report.pdf",
+                    file_name="Online_Monthly_Report.pdf",
                     mime="application/pdf",
                 )
 
