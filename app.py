@@ -226,7 +226,9 @@ def read_cost_file(uploaded_file, default_year: int = 2026) -> pd.DataFrame:
     else:
         raw = pd.read_excel(uploaded_file, header=None)
 
-    month = extract_month_from_text(filename) or extract_month_from_text(" ".join(raw.head(3).astype(str).fillna("").values.flatten().tolist())
+    month = extract_month_from_text(filename) or extract_month_from_text(
+    " ".join(raw.head(3).astype(str).fillna("").values.flatten().tolist())
+)
     if month is None:
         month = f"{default_year}-01"
 
