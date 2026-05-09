@@ -412,7 +412,7 @@ else:
     monthly_kpi = monthly_sales.copy()
 
 monthly_kpi = monthly_kpi.sort_values("월").reset_index(drop=True)
-monthly_kpi = calc_growth(monthly_kpi, "매출액", []) if len(monthly_kpi) > 0 else monthly_kpi
+monthly_kpi = calc_growth(monthly_kpi, "매출액") if len(monthly_kpi) > 0 else monthly_kpi
 monthly_kpi.rename(columns={"증감률(%)": "매출증감률(%)", "증감액": "매출증감액"}, inplace=True)
 monthly_kpi["전월순이익"] = monthly_kpi["순이익"].shift(1)
 monthly_kpi["순이익증감액"] = monthly_kpi["순이익"] - monthly_kpi["전월순이익"]
