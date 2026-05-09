@@ -284,10 +284,12 @@ def format_pct(v: float) -> str:
     return f"{v:+.1f}%"
 
 
-if len(group_cols) == 0:
-    out["전월"] = out[value_col].shift(1)
-else:
-    out["전월"] = out.groupby(group_cols, dropna=False)[value_col].shift(1)
+def calc_growth(df: pd.DataFrame, value_col: str, group_cols: List[str]) -> pd.DataFrame:
+    out = df.sort_values(group_cols + ["월"]).copy()
+    out["전월"] = out.groupby(group_cols)[value_col].shift(1)
+    out["증감액"] = out[value_col] - out["전월"]
+    out["증감률(%)"] = (out["증감액"] / out["전월"].replace(0, pd.NA) * 100).fillna(0)
+    return out
 
 
 with st.sidebar:
