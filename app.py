@@ -226,14 +226,14 @@ def read_cost_file(uploaded_file, default_year: int = 2026) -> pd.DataFrame:
     else:
         raw = pd.read_excel(uploaded_file, header=None)
 
-    month = extract_month_from_text(filename) or extract_month_from_text(" ".join(raw.head(3).astype(str).values.flatten()))
+    month = extract_month_from_text(filename) or extract_month_from_text(" ".join(raw.head(3).astype(str).fillna("").values.flatten().tolist())
     if month is None:
         month = f"{default_year}-01"
 
     # '금액'이 있는 행을 헤더로 승격
     header_idx = None
     for i in range(min(len(raw), 10)):
-        if "금액" in [str(v).strip() for v in raw.iloc[i].values]:
+        if "금액" in [str(v).strip() if pd.notna(v) else "" for v in raw.iloc[i].values]:
             header_idx = i
             break
 
